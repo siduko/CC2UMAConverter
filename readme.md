@@ -76,5 +76,49 @@ Aft. You will find a JSON file next to the FBX file that contains some informati
 - [ ] Support for Accessories and Hats without Skinning
 
 
+---
+
+# 🧬 Daz3D To UMA [ Experimental ]
+## 📖Description
+`DazUMAConverterBlender` is a companion Blender plugin that converts Daz3D Genesis characters (Genesis 3, 8, 8.1, 9) to UMA-compatible assets using the same pipeline as the Character Creator 4 plugin. The output is fully compatible with the existing **UmaConverterUnity** plugin — no Unity-side changes required.
+
+## 🛠️Installation
+### Blender Plugin
+1. Download or clone this repository.
+2. Open Blender and go to **Edit > Preferences > Add-ons > Install**.
+3. Select `DazUMAConverterBlender` as a folder (zip the folder if needed).
+4. Enable the Add-on by checking the box next to **Daz UMA Converter**.
+5. Click **File > Defaults > Save Startup File**.
+
+## 🎛️Usage
+
+### 📦 Daz3D Export
+Export your character from Daz Studio as FBX:
+1. **File > Export As > FBX**
+2. Set **Morphs** to disabled (morphs are out of scope).
+3. Enable **Merge Clothing into Figure Skeleton** for clothing exports.
+4. Save textures alongside the FBX in the same folder.
+
+### 🩻 Create a new UMA Race
+1. In Blender open the **Daz UMA Converter** panel (N-panel, `Daz UMA Converter` tab).
+2. Click **Import FBX** and select your exported Daz character FBX.
+3. The plugin detects the rig generation (G3/G8/G9).
+4. Set **Rig Type** to `Race` and press **Convert**.
+5. Select meshes, fill in Slot Names, then press **Export Selected**.
+6. Drag both the `.fbx` and `_race.json` into your Unity project.
+
+### 👕 Create UMA Clothing
+1. Import a clothed Daz character FBX.
+2. Set **Rig Type** to `Clothing`, select the `_race.json` from your previously exported Race.
+3. Press **Convert**, select clothing meshes, set Slot Names and Wardrobe Slot Types.
+4. Press **Export Selected**.
+5. Drag the `.fbx` and `_cloth.json` into Unity.
+
+### ⚠️ Important Notes
+- Textures must be exported alongside the FBX in the same directory.
+- Only PBR (Principled BSDF) materials are supported. Daz's Iray skin/eye/hair shaders are not handled.
+- Morphs, shape keys, strand hair, and non-skinned accessories are out of scope.
+- If you export clothing for a race, use exactly the same base character for all clothing exports.
+
 ## 📜License
 This Blender Plugin and Unity Plugin are Developed and Copyrighted by [Valentin Winkelmann](https://vwgame.dev/). This Software is Free to use in a Non-Commercial and Commercial Enviroment. Please read the full [End-User License Agreement](https://github.com/valentinwinkelmann/CC2UMAConverter/blob/main/license.md)
