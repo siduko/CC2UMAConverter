@@ -8,21 +8,26 @@ if "dataHandling" in locals():
 else:
     from . import dataHandling
 
-_GENERATION_SIGNATURES = {
-    "G3": "abdomen",
-    "G8": "abdomenLower",
-    "G9": "spine1",
-}
-
 def _detect_generation(armature_obj):
-    """Return 'G3', 'G8', 'G9', or 'unknown' by inspecting children of 'hip'."""
-    bones = armature_obj.data.bones
-    if "hip" not in bones:
-        return "unknown"
-    hip_children = {b.name for b in bones["hip"].children}
-    for gen, signature in _GENERATION_SIGNATURES.items():
-        if signature in hip_children:
-            return gen
+    """Return 'G3', 'G8', 'G8.1', 'G9', or 'unknown' by inspecting bone names."""
+    bones = armature_obj.data.bones.keys()
+
+    # Genesis 9
+    if "root" in bones and "head_end" in bones:
+        return "G9"
+
+    # Genesis 8.1
+    if any("facs_" in bone for bone in bones):
+        return "G8.1"
+
+    # Genesis 8
+    if "lUpperArmTwist" in bones and "head" in bones:
+        return "G8"
+
+    # Genesis 3
+    if "head" in bones and "lThigh" in bones and "lUpperArmTwist" not in bones:
+        return "G3"
+
     return "unknown"
 
 def check_rig():
