@@ -134,6 +134,9 @@ class DAZUMA_OT_Convert(Operator):
             )
             dataHandling.save_to_scene_properties(race_data, "race_data")
             current_hip = dazconverter.get_daz_hip_height_global()
+            if current_hip is None:
+                self.report({"ERROR"}, "Could not find hip bone for height adjustment.")
+                return {"CANCELLED"}
             difference = current_hip - race_data.hipHeight
             dazconverter.adjust_daz_hip_height(-difference)
 
@@ -242,9 +245,11 @@ class DAZUMA_OT_Export(Operator, ExportHelper):
 
         if self.export_textures:
             selected_objects = [
-                bpy.data.objects[item.name]
+                obj
                 for item in context.scene.mesh_items
                 if item.selected
+                for obj in [bpy.data.objects.get(item.name)]
+                if obj is not None
             ]
             _save_textures(self.filepath, selected_objects, filename_no_ext)
 
