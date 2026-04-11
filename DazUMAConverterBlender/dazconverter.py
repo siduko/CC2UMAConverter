@@ -50,3 +50,56 @@ def check_rig():
             result["is_daz_rig"] = True
             result["generation"] = _detect_generation(obj)
     return result
+
+
+def get_daz_hip_height_global():
+    """
+    Returns the world-Z position of the 'hip' bone head.
+    Returns None if no armature or 'hip' bone is found.
+    """
+    bpy.ops.object.mode_set(mode="OBJECT")
+    armature = next(
+        (obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"), None
+    )
+    if armature is None:
+        print("No armature found.")
+        return None
+    bpy.context.view_layer.objects.active = armature
+    armature.select_set(True)
+    bpy.ops.object.mode_set(mode="POSE")
+    pose_bone = armature.pose.bones.get("hip")
+    if pose_bone is None:
+        print("'hip' bone not found.")
+        bpy.ops.object.mode_set(mode="OBJECT")
+        return None
+    world_position = armature.matrix_world @ pose_bone.head
+    bpy.ops.object.mode_set(mode="OBJECT")
+    return world_position.z
+
+
+def adjust_daz_hip_height(y_delta):
+    """
+    Adjusts the Y position of the 'hip' bone in Pose mode by y_delta.
+    Used during clothing conversion to normalise height to the saved race template.
+    """
+    bpy.ops.object.mode_set(mode="OBJECT")
+    armature = next(
+        (obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"), None
+    )
+    if armature is None:
+        print("No armature found.")
+        return
+    bpy.context.view_layer.objects.active = armature
+    armature.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bone = armature.data.edit_bones.get("hip")
+    if bone:
+        bone.select = True
+        bone.select_head = True
+        bone.select_tail = True
+        bpy.ops.armature.parent_clear(type="DISCONNECT")
+    bpy.ops.object.mode_set(mode="POSE")
+    pose_bone = armature.pose.bones.get("hip")
+    if pose_bone:
+        pose_bone.location[1] = y_delta
+    bpy.ops.object.mode_set(mode="OBJECT")
