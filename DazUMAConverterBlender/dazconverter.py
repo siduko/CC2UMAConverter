@@ -172,3 +172,72 @@ def add_uma_bones():
     for mesh_obj in bpy.data.objects:
         if mesh_obj.type == "MESH":
             mesh_obj.rotation_euler = (0.0, 0.0, 0.0)
+
+
+def meshes_to_overlay(mesh_names):
+    """Returns a deduplicated list of material names used by the given meshes."""
+    unique_materials = set()
+    for mesh_name in mesh_names:
+        mesh = bpy.data.objects.get(mesh_name)
+        if mesh and mesh.type == "MESH":
+            for mat_slot in mesh.material_slots:
+                if mat_slot.material:
+                    unique_materials.add(mat_slot.material.name)
+    return list(unique_materials)
+
+
+def mesh_to_overlay(mesh_name):
+    """Returns the first material name of a given mesh (the UMA overlay name)."""
+    mesh = bpy.data.objects.get(mesh_name)
+    if mesh and mesh.type == "MESH":
+        for mat_slot in mesh.material_slots:
+            if mat_slot.material:
+                return mat_slot.material.name
+    return ""
+
+
+def _find_textures(base_path, search_pattern):
+    pattern = os.path.join(base_path, "**", search_pattern + "*.*")
+    return glob.glob(pattern, recursive=True)
+
+
+def _add_texture_to_material(material, texture_path, texture_type):
+    """Adds an image texture node to a PBR material and wires it to the BSDF."""
+    if not material.use_nodes:
+        material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+
+    texture_node = nodes.new(type="ShaderNodeTexImage")
+    texture_node.image = bpy.data.images.load(texture_path)
+    texture_node.location = (0, 0)
+    texture_node.name = texture_node.label = texture_type
+
+    if texture_type in ("roughness", "metallic"):
+        texture_node.image.colorspace_settings.name = "Non-Color"
+
+    bsdf = next((n for n in nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if bsdf:
+        if texture_type == "metallic":
+            links.new(texture_node.outputs["Color"], bsdf.inputs["Metallic"])
+        elif texture_type == "roughness":
+            links.new(texture_node.outputs["Color"], bsdf.inputs["Roughness"])
+
+
+def setup_daz_materials(search_base_path):
+    """
+    Scans the FBX directory for Daz texture files and assigns them to materials.
+    Supports both default Daz export naming (_Roughness, _Metallic)
+    and iRay baked naming (_roughness, _metallic — lowercase).
+    Unmatched textures are skipped silently.
+    """
+    for material in bpy.data.materials:
+        if not material.use_nodes:
+            continue
+        found_files = _find_textures(search_base_path, material.name)
+        for file in found_files:
+            lower = file.lower()
+            if "_roughness" in lower:
+                _add_texture_to_material(material, file, "roughness")
+            elif "_metallic" in lower:
+                _add_texture_to_material(material, file, "metallic")
