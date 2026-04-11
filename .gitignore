@@ -1,2 +1,4 @@
 /WorkEnviroment/
 .gitnexus
+__pycache__/
+*.pyc
