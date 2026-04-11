@@ -8,9 +8,26 @@ if "dataHandling" in locals():
 else:
     from . import dataHandling
 
+_GENERATION_SIGNATURES = {
+    "G3": "abdomen",
+    "G8": "abdomenLower",
+    "G9": "spine1",
+}
+
+def _detect_generation(armature_obj):
+    """Return 'G3', 'G8', 'G9', or 'unknown' by inspecting children of 'hip'."""
+    bones = armature_obj.data.bones
+    if "hip" not in bones:
+        return "unknown"
+    hip_children = {b.name for b in bones["hip"].children}
+    for gen, signature in _GENERATION_SIGNATURES.items():
+        if signature in hip_children:
+            return gen
+    return "unknown"
+
 def check_rig():
     """
-    Detects if the current armature is a Daz Genesis rig, UMA rig, and determines generation.
+    Detects if any armature in the scene is a Daz Genesis rig, UMA rig, and determines generation.
     Returns:
         dict: {
             'is_daz_rig': bool,
@@ -18,49 +35,18 @@ def check_rig():
             'generation': str
         }
     """
-    armature = None
-    for obj in bpy.context.selected_objects:
-        if obj.type == 'ARMATURE':
-            armature = obj
-            break
-    if not armature:
-        for obj in bpy.context.scene.objects:
-            if obj.type == 'ARMATURE':
-                armature = obj
-                break
-    if not armature:
-        return {'is_daz_rig': False, 'is_uma_rig': False, 'generation': 'unknown'}
-
-    bones = armature.data.bones
-    bone_names = set(bones.keys())
-
-    # UMA rig detection
-    is_uma_rig = False
-    if 'Global' in bone_names:
-        global_bone = bones['Global']
-        children = [b.name for b in global_bone.children]
-        if 'Position' in children:
-            is_uma_rig = True
-
-    # Daz rig detection
-    is_daz_rig = False
-    if 'hip' in bone_names and 'CC_Base_Hip' not in bone_names:
-        is_daz_rig = True
-
-    # Generation detection
-    generation = 'unknown'
-    if 'hip' in bone_names:
-        hip_bone = bones['hip']
-        hip_children = [b.name for b in hip_bone.children]
-        if 'abdomen' in hip_children:
-            generation = 'G3'
-        elif 'abdomenLower' in hip_children:
-            generation = 'G8'
-        elif 'spine1' in hip_children:
-            generation = 'G9'
-
-    return {
-        'is_daz_rig': is_daz_rig,
-        'is_uma_rig': is_uma_rig,
-        'generation': generation
-    }
+    result = {"is_daz_rig": False, "is_uma_rig": False, "generation": "unknown"}
+    for obj in bpy.data.objects:
+        if obj.type != "ARMATURE":
+            continue
+        bones = obj.data.bones
+        # UMA rig: Global bone has Position as a child
+        if "Global" in bones:
+            pos_children = {b.name for b in bones["Global"].children}
+            if "Position" in pos_children:
+                result["is_uma_rig"] = True
+        # Daz rig: 'hip' root bone present, no CC4 bones present
+        if "hip" in bones and "CC_Base_Hip" not in bones:
+            result["is_daz_rig"] = True
+            result["generation"] = _detect_generation(obj)
+    return result
