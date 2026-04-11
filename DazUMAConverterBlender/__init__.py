@@ -125,6 +125,9 @@ class DAZUMA_OT_Convert(Operator):
 
         if context.scene.rig_type == "race":
             hip_height = dazconverter.get_daz_hip_height_global()
+            if hip_height is None:
+                self.report({"ERROR"}, "Could not find hip bone. Ensure the armature has a 'hip' bone.")
+                return {"CANCELLED"}
             race_data = dataHandling.UMAData_Race("NewRace", hip_height, [], [], [])
             dataHandling.save_to_scene_properties(race_data, "race_data")
 
@@ -187,10 +190,16 @@ class DAZUMA_OT_Export(Operator, ExportHelper):
                 mesh_obj = bpy.data.objects.get(item.name)
                 if mesh_obj:
                     mesh_obj.select_set(True)
+        armature_found = False
         for obj in bpy.data.objects:
             if obj.type == "ARMATURE":
                 obj.select_set(True)
                 context.view_layer.objects.active = obj
+                armature_found = True
+                break
+        if not armature_found:
+            self.report({"ERROR"}, "No armature found. Cannot export without skeleton.")
+            return {"CANCELLED"}
 
         bpy.ops.export_scene.fbx(
             filepath=self.filepath,
