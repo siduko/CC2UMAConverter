@@ -1,9 +1,20 @@
-# 🩻Character Creator 4 To UMA [ Experimental ]
+# 🩻 Character Creator 4 & Daz3D To UMA [ Experimental ]
 ## 📖Description
-This set of Two Plugins for Blender and Unity will help you to convert a Character Creator 4 Character to a fully functional and ready to use UMA Asset. The Plugin will not only allow you to convert a naked Character as a new UMA Race, it will also allow you to convert clothed Characters to UMA Wardrobe Slots. The Plugin will take care of the necessary steps and keeps everything as simple as possible. The main goal is to let you focus on preparing your Character and Clothing in Character Creator 4 and build a easy to use Brdige to UMA. While you can of course modify the resulting UMA Assets directly in Unity, the Plugin is designed to let you handle everything in Blender.
+This set of plugins for Blender and Unity converts characters to fully functional, ready-to-use UMA assets. It supports both **Character Creator 4** and **Daz3D Genesis** (Gen3, Gen8, Gen8.1, Gen9) as source formats, and shares a single **Unity post-processor** — so assets from either source drop straight into the same UMA project.
+
+The plugins handle Race creation (naked character → new UMA Race) and Wardrobe Slot creation (clothed character → UMA clothing). They take care of the necessary conversion steps and keep everything as simple as possible, letting you focus on preparing your character in CC4 or Daz Studio and building an easy bridge to UMA. While you can modify the resulting UMA assets directly in Unity, the plugins are designed to let you handle everything in Blender.
+
+> **Two Blender plugins, one Unity plugin:**
+> - `UMAConverterBlender` — for Character Creator 4
+> - `DazUMAConverterBlender` — for Daz3D Genesis
+> - `UmaConverterUnity` — shared Unity post-processor (works with both)
+
+---
+
+# 🩻 Character Creator 4 [ Experimental ]
 
 ## 🎮Unity Plugin
-The Plugin comes with an Unity Asset Postprocessor that will take the UMA Compatible outputs from Blender and automatically create a race or wardrobe slots for you. This Plugin will do a lot of steps in the Background but won't bother you with any of it.
+A shared Unity Asset Postprocessor handles the output from **both** Blender plugins (CC4 and Daz). It reads the exported FBX and JSON files and automatically creates races and wardrobe slots for you, doing all the heavy lifting in the background.
 
 ## 📺See it in Action
 https://imgur.com/a/tKXUXQj
@@ -57,7 +68,7 @@ Aft. You will find a JSON file next to the FBX file that contains some informati
 - Currently the Plugin only works with Character Exports which used InstaLOD Material Merge.
 - Currently you can't export a Character with Hats or other non skinned Accessories. CC4 adds them with a Nasty Extra Bone and the Plugin won't handle that. If you Want to Export a Hat, you have to skin it like a normal Clothing Piece and bind it to the Head Bone.
 
-## 🔮Planed and Upcomming Features
+## 🔮Planned and Upcoming Features
 - [X] Race Conversion
 - [X] Wardrobe Slot Conversion
 - [X] Define Wardrobe Slot Types in Blender
@@ -65,6 +76,7 @@ Aft. You will find a JSON file next to the FBX file that contains some informati
 - [X] Export Textures and rename them as their Overlay Names
 - [X] Unity Postprocessor to Create all UMA Assets for you
 - [x] GameCreator 2 Integration
+- [X] Daz3D Genesis support (Gen3/8/8.1/9)
 - [ ] Rework the Codebase to be more flexible and extendable
 - [ ] Make Renaming the Materials automatically in Blender
 - [ ] Thumbnail Export for UMA Wardrobe Slots
