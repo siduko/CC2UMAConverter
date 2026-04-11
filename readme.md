@@ -38,35 +38,37 @@ That's it. The Plugin will be installed and ready to use.
 
 ## 🎛️Usage
 
-### 📦Character Creator 4 Export
-Exporting your Character from Character Creator 4 is pretty simple, but needs to follow a few very important steps, so the Blender Plugin can understant it's structure.
-1. ```File > Export > Clothed Character```
-2. Set Target Tool Preset to ```Maya```. (*Not Unity*)
-3. Set FBX Options to ```Mesh```.
-4. Disable Embed Textures.
-5. Enable InstaLOD Material Merge ( the type you want )
+### 📦 Character Creator 4 Export
+1. `File > Export > Clothed Character`
+2. Set **Target Tool Preset** to `Maya` *(not Unity)*
+3. Set **FBX Options** to `Mesh`
+4. Disable **Embed Textures**
+5. Enable **InstaLOD Material Merge** (choose the type you want)
 
-### 🩻Create a new UMA Race
-To convert a naked CC4 Character to a new UMA Race, you will import the character in blender and Choose Rig Type: Race. When you press converting the Plugin will calculate some information about the rig in Background.
-Inside the UMA Tab you will now be able to select which of the meshes should be exported. When you select one you will see a Slot Name field for the selected mesh. You have to fill this and it should be unique for each mesh. This will be the UMA Slot Name in Unity.
-You Will Also see Available Overlays list of Material names. This materials are the one which UMA will Create and are defined by the Blender Material Names. You can Rename them using the default Blender Material Tab.
+### 🩻 Create a new UMA Race
+1. In Blender open the **UMA Converter** panel (N-panel, `UMA Converter` tab).
+2. Click **Import FBX** and select your exported CC4 character FBX.
+3. Set **Rig Type** to `Race` and press **Convert**.
+4. Select the meshes to export and fill in a unique **Slot Name** for each.
+5. Rename materials in the Blender Material tab if needed — these become your UMA Overlay names.
+6. Press **Export Selected**, choose a save location.
+7. Keep the `_race.json` file alongside the FBX — you'll need it for clothing exports.
+8. Drag both the `.fbx` and `_race.json` into your Unity project.
 
-Use the Export button to Choose a location for your Character. Along your exported FBX file you will find a JSON file that contains some information about your character.
-This JSON file is important when you want to convert new Clothings for your Character, so keep it safe.
-You can now Drag and Drop booth files into your Unity Project and the Postprocessor will take care of the rest.
+### 👕 Create UMA Clothing
+1. Import a clothed CC4 character FBX.
+2. Set **Rig Type** to `Clothing` and select the `_race.json` from your previously exported Race.
+3. Press **Convert**, then select the clothing meshes (race meshes are automatically ignored).
+4. Fill in Slot Names, rename materials as needed, and set a **Wardrobe Slot Type** for each mesh.
+5. Press **Export Selected**.
+6. Drag the `.fbx` and `_cloth.json` into Unity.
 
-### 👕Create a new UMA Clothing
-To convert a clothed CC4 Character to a new UMA Wardrobe Slot, you will import the character in blender and Choose Rig Type: Clothing. Before you can press the convert button you have to select a Race JSON File, that you created before.
-Now you can press the convert button and the Plugin will do the rest. Like the UMA Race workflow you can now choose which meshes should be exported ( Race Meshes will be ignored and while they are in the Scene you dont have to worry about them ). As with the Race Creation you will have to fill the Slot Names and can rename the Material Names to your liking. You also have to Choose your desired Wardrobe Slot Type. The Plugin will give you a predefined list of Wardrobe Slots which UMA uses by Default but you can freely type any Wardrobe Slot Type you want, just make sure this is consistent with your other Clothing conversions.
-Aft. You will find a JSON file next to the FBX file that contains some information about your clothing. This is the *_Cloth.json file.
-
-### ⚠️Important Notes and Limitations
-- If you Export clothing for a Race you created before, you have to use exactly the same Character for the Clothing Exports. If you plan to export a set of multiple clothings over time, you should save your Race Template Character in Character Creator 4.
-- The Plugin Exports JSON Files, which are simple but better keep them if you plan to create new clothings for your character in the future.
-- The Plugin is not meant to let you modifiy and adjust the Mesh in Blender. You can do that, but it may break the scene and make the Plugin not work as expected with your modified meshes.
-- The Plugin works currently only with PBR Materials. before Exporting your Character from Character Creator 4, it's therefore necessary to set the Material Type to PBR. At the moment there are no plans to extend the Plugin to handle other Material Types.
-- Currently the Plugin only works with Character Exports which used InstaLOD Material Merge.
-- Currently you can't export a Character with Hats or other non skinned Accessories. CC4 adds them with a Nasty Extra Bone and the Plugin won't handle that. If you Want to Export a Hat, you have to skin it like a normal Clothing Piece and bind it to the Head Bone.
+### ⚠️ Important Notes and Limitations
+- If you export clothing for a race, you must use exactly the same base character for all clothing exports. Save your Race Template Character in CC4 for future use.
+- Only PBR materials are supported. Set the Material Type to PBR in CC4 before exporting.
+- Only character exports using InstaLOD Material Merge are supported.
+- Mesh edits in Blender may break the scene and cause unexpected results.
+- Hats and non-skinned accessories with extra bones are not supported. Skin them like regular clothing to export.
 
 ## 🔮Planned and Upcoming Features
 - [X] Race Conversion
