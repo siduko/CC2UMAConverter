@@ -209,7 +209,11 @@ def _add_texture_to_material(material, texture_path, texture_type):
     links = material.node_tree.links
 
     texture_node = nodes.new(type="ShaderNodeTexImage")
-    texture_node.image = bpy.data.images.load(texture_path)
+    try:
+        texture_node.image = bpy.data.images.load(texture_path)
+    except RuntimeError:
+        nodes.remove(texture_node)
+        return
     texture_node.location = (0, 0)
     texture_node.name = texture_node.label = texture_type
 
@@ -235,9 +239,12 @@ def setup_daz_materials(search_base_path):
         if not material.use_nodes:
             continue
         found_files = _find_textures(search_base_path, material.name)
+        loaded_types = set()
         for file in found_files:
             lower = file.lower()
-            if "_roughness" in lower:
+            if "_roughness" in lower and "roughness" not in loaded_types:
                 _add_texture_to_material(material, file, "roughness")
-            elif "_metallic" in lower:
+                loaded_types.add("roughness")
+            elif "_metallic" in lower and "metallic" not in loaded_types:
                 _add_texture_to_material(material, file, "metallic")
+                loaded_types.add("metallic")
