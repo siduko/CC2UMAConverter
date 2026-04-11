@@ -1,0 +1,318 @@
+bl_info = {
+    "name": "Daz UMA Converter",
+    "blender": (2, 93, 0),
+    "category": "Object",
+    "version": (0, 1, 0),
+    "author": "Valentin Winkelmann",
+    "description": (
+        "Converts Daz3D Genesis characters (Gen3/8/8.1/9) to UMA-compatible assets "
+        "for use with the UMA Framework in Unity."
+    ),
+}
+
+import bpy
+import importlib
+import os
+import shutil
+from bpy_extras.io_utils import ImportHelper, ExportHelper
+from bpy.types import Operator, Panel
+from bpy.props import StringProperty, EnumProperty, BoolProperty
+
+if "dataHandling" in locals():
+    importlib.reload(dataHandling)
+else:
+    from . import dataHandling
+
+if "dazconverter" in locals():
+    importlib.reload(dazconverter)
+else:
+    from . import dazconverter
+
+if "gui" in locals():
+    importlib.reload(gui)
+else:
+    from . import gui
+
+
+# ── Viewport helper ──────────────────────────────────────────────────────────
+
+def init_blender_viewport():
+    for area in bpy.context.screen.areas:
+        if area.type == "VIEW_3D":
+            space = area.spaces.active
+            if hasattr(space, "shading"):
+                space.shading.type = "MATERIAL"
+                break
+
+
+# ── Panel ────────────────────────────────────────────────────────────────────
+
+class DAZUMA_PT_Panel(Panel):
+    bl_label = "Daz UMA Converter"
+    bl_idname = "DAZUMA_PT_Panel"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Daz UMA Converter"
+
+    def draw(self, context):
+        layout = self.layout
+        rig_status = dazconverter.check_rig()
+
+        layout.label(text="Daz UMA Converter v0.1.0")
+
+        if rig_status["is_daz_rig"]:
+            gen = rig_status["generation"]
+            layout.label(text=f"Daz Rig found ({gen})", icon="INFO")
+            layout.prop(context.scene, "rig_type", text="Rig Type")
+
+            if context.scene.rig_type == "clothing":
+                box = layout.box()
+                box.label(text="Clothing Options")
+                box.prop(context.scene, "json_file_path", text="JSON File Path")
+
+            layout.operator("dazuma.convert", text="Convert")
+
+        elif rig_status["is_uma_rig"]:
+            if context.scene.rig_type == "race":
+                layout.prop(context.scene, "race_name")
+
+            race_data = None
+            if context.scene.rig_type == "clothing":
+                race_data = dataHandling.load_from_scene_properties(
+                    "race_data", dataHandling.UMAData_Race
+                )
+                box = layout.box()
+                box.label(text="UMA Race Info", icon="INFO")
+                box.label(text="Clothing for: " + race_data.name)
+
+            layout.separator()
+            layout.label(text="Available Overlays:")
+            overlays = dazconverter.meshes_to_overlay(
+                [item.name for item in context.scene.mesh_items if item.selected]
+            )
+            for overlay in overlays:
+                row = layout.row()
+                row.label(text=overlay, icon="MATERIAL")
+
+            layout.label(text="Available Meshes:")
+            for item in context.scene.mesh_items:
+                if race_data is not None and item.name in race_data.meshes:
+                    continue
+                box = layout.box()
+                row = box.row()
+                row.prop(item, "selected", text=item.name)
+                if item.selected:
+                    row.prop(item, "slot_name", text="Slot Name")
+                if context.scene.rig_type == "clothing" and item.selected:
+                    box.prop(item, "wardrobe_slot")
+
+            layout.operator("dazuma.export", text="Export Selected")
+
+        else:
+            layout.label(text="Please import a Daz Genesis FBX", icon="INFO")
+            layout.operator("dazuma.import", text="Import FBX")
+
+
+# ── Operators ────────────────────────────────────────────────────────────────
+
+class DAZUMA_OT_Convert(Operator):
+    bl_idname = "dazuma.convert"
+    bl_label = "Convert"
+
+    def execute(self, context):
+        init_blender_viewport()
+        dazconverter.apply_transforms_rest_pose()
+
+        if context.scene.rig_type == "race":
+            hip_height = dazconverter.get_daz_hip_height_global()
+            if hip_height is None:
+                self.report({"ERROR"}, "Could not find hip bone. Ensure the armature has a 'hip' bone.")
+                return {"CANCELLED"}
+            race_data = dataHandling.UMAData_Race("NewRace", hip_height, [], [], [])
+            dataHandling.save_to_scene_properties(race_data, "race_data")
+
+        if context.scene.rig_type == "clothing":
+            race_data = dataHandling.load_from_json_file(
+                context.scene.json_file_path, dataHandling.UMAData_Race
+            )
+            dataHandling.save_to_scene_properties(race_data, "race_data")
+            current_hip = dazconverter.get_daz_hip_height_global()
+            if current_hip is None:
+                self.report({"ERROR"}, "Could not find hip bone for height adjustment.")
+                return {"CANCELLED"}
+            difference = current_hip - race_data.hipHeight
+            dazconverter.adjust_daz_hip_height(-difference)
+
+        dazconverter.add_uma_bones()
+        self.report({"INFO"}, "Conversion complete.")
+        return {"FINISHED"}
+
+
+class DAZUMA_OT_Import(Operator, ImportHelper):
+    bl_idname = "dazuma.import"
+    bl_label = "Import FBX"
+    filename_ext = ".fbx"
+    filter_glob: StringProperty(default="*.fbx", options={"HIDDEN"})
+
+    def execute(self, context):
+        import_options = {
+            "use_anim": False,
+            "ignore_leaf_bones": True,
+            "automatic_bone_orientation": False,
+        }
+        bpy.ops.import_scene.fbx(filepath=self.filepath, **import_options)
+        bpy.context.scene.mesh_items.clear()
+        for obj in bpy.data.objects:
+            if obj.type == "MESH":
+                item = bpy.context.scene.mesh_items.add()
+                item.name = obj.name
+        file_dir = os.path.dirname(self.filepath)
+        dazconverter.setup_daz_materials(file_dir)
+        self.report({"INFO"}, "FBX imported successfully.")
+        return {"FINISHED"}
+
+
+class DAZUMA_OT_Export(Operator, ExportHelper):
+    bl_idname = "dazuma.export"
+    bl_label = "Export Selected"
+    filename_ext = ".fbx"
+
+    export_textures: BoolProperty(
+        name="Export Textures",
+        description="Copy textures alongside the exported FBX",
+        default=True,
+    )
+
+    def execute(self, context):
+        bpy.ops.object.select_all(action="DESELECT")
+        for item in context.scene.mesh_items:
+            if item.selected:
+                mesh_obj = bpy.data.objects.get(item.name)
+                if mesh_obj:
+                    mesh_obj.select_set(True)
+        armature_found = False
+        for obj in bpy.data.objects:
+            if obj.type == "ARMATURE":
+                obj.select_set(True)
+                context.view_layer.objects.active = obj
+                armature_found = True
+                break
+        if not armature_found:
+            self.report({"ERROR"}, "No armature found. Cannot export without skeleton.")
+            return {"CANCELLED"}
+
+        bpy.ops.export_scene.fbx(
+            filepath=self.filepath,
+            use_selection=True,
+            global_scale=0.01,
+            object_types={"MESH", "ARMATURE"},
+            add_leaf_bones=False,
+        )
+
+        filename_no_ext = self.filepath.replace(".fbx", "")
+
+        if context.scene.rig_type == "race":
+            race_data = dataHandling.load_from_scene_properties(
+                "race_data", dataHandling.UMAData_Race
+            )
+            race_data.name = context.scene.race_name
+            race_data.meshes = [
+                item.name for item in context.scene.mesh_items if item.selected
+            ]
+            race_data.overlays = dazconverter.meshes_to_overlay(race_data.meshes)
+            race_data.slots = []
+            for item in context.scene.mesh_items:
+                if item.selected:
+                    slot = dataHandling.UMAData_Slot(
+                        item.slot_name,
+                        item.name,
+                        dazconverter.mesh_to_overlay(item.name),
+                    )
+                    race_data.slots.append(slot)
+            dataHandling.save_to_json_file(race_data, filename_no_ext + "_race.json")
+
+        if context.scene.rig_type == "clothing":
+            race_data = dataHandling.load_from_scene_properties(
+                "race_data", dataHandling.UMAData_Race
+            )
+            cloth_data = dataHandling.UMAData_Cloth([race_data.name], [], [], [])
+            cloth_data.meshes = [
+                item.name for item in context.scene.mesh_items if item.selected
+            ]
+            cloth_data.overlays = dazconverter.meshes_to_overlay(cloth_data.meshes)
+            cloth_data.slots = []
+            for item in context.scene.mesh_items:
+                if item.selected:
+                    slot = dataHandling.UMAData_Slot(
+                        item.slot_name,
+                        item.name,
+                        dazconverter.mesh_to_overlay(item.name),
+                    )
+                    slot.wardrobeSlot = item.wardrobe_slot
+                    cloth_data.slots.append(slot)
+            dataHandling.save_to_json_file(cloth_data, filename_no_ext + "_cloth.json")
+
+        if self.export_textures:
+            selected_objects = [
+                obj
+                for item in context.scene.mesh_items
+                if item.selected
+                for obj in [bpy.data.objects.get(item.name)]
+                if obj is not None
+            ]
+            _save_textures(self.filepath, selected_objects, filename_no_ext)
+
+        self.report({"INFO"}, "Export successful.")
+        return {"FINISHED"}
+
+    def draw(self, context):
+        self.layout.prop(self, "export_textures")
+
+
+# ── Texture export helper ────────────────────────────────────────────────────
+
+def _save_textures(filepath, selected_objects, custom_folder_name):
+    base_dir = os.path.dirname(filepath)
+    texture_dir = os.path.join(base_dir, custom_folder_name, "Textures")
+    os.makedirs(texture_dir, exist_ok=True)
+    for obj in selected_objects:
+        if obj.type != "MESH" or not obj.material_slots:
+            continue
+        for slot in obj.material_slots:
+            if not slot.material or not slot.material.use_nodes:
+                continue
+            for node in slot.material.node_tree.nodes:
+                if node.type == "TEX_IMAGE" and node.image:
+                    src = bpy.path.abspath(node.image.filepath)
+                    if os.path.isfile(src):
+                        suffix = os.path.basename(src).split("_")[-1]
+                        dest_name = f"{slot.material.name}_{suffix}"
+                        shutil.copy(src, os.path.join(texture_dir, dest_name))
+
+
+# ── Register / Unregister ────────────────────────────────────────────────────
+
+def register():
+    gui.register_rig_type_selector()
+    gui.register_json_file_field()
+    gui.register_race_wizard()
+    gui.register_mesh_items()
+    bpy.utils.register_class(DAZUMA_PT_Panel)
+    bpy.utils.register_class(DAZUMA_OT_Convert)
+    bpy.utils.register_class(DAZUMA_OT_Import)
+    bpy.utils.register_class(DAZUMA_OT_Export)
+
+
+def unregister():
+    gui.unregister_rig_type_selector()
+    gui.unregister_json_file_field()
+    gui.unregister_race_wizard()
+    gui.unregister_mesh_items()
+    bpy.utils.unregister_class(DAZUMA_PT_Panel)
+    bpy.utils.unregister_class(DAZUMA_OT_Convert)
+    bpy.utils.unregister_class(DAZUMA_OT_Import)
+    bpy.utils.unregister_class(DAZUMA_OT_Export)
+
+
+if __name__ == "__main__":
+    register()
