@@ -45,9 +45,15 @@ That's it. The Plugin will be installed and ready to use.
 4. Disable **Embed Textures**
 5. Enable **InstaLOD Material Merge** (choose the type you want)
 
+### 📦 Daz Studio Export
+1. `File > Export As > FBX`
+2. Under **Morphs**, disable all morphs (not supported)
+3. For clothing exports, enable **Merge Clothing into Figure Skeleton**
+4. Save textures to the **same folder** as the FBX — the plugin searches for them there
+
 ### 🩻 Create a new UMA Race
-1. In Blender open the **UMA Converter** panel (N-panel, `UMA Converter` tab).
-2. Click **Import FBX** and select your exported CC4 character FBX.
+1. In Blender open the **UMA Converter** panel for CC4 (`UMA Converter` tab) or the **Daz UMA Converter** panel for Daz (`Daz UMA Converter` tab).
+2. Click **Import FBX** and select your exported character FBX.
 3. Set **Rig Type** to `Race` and press **Convert**.
 4. Select the meshes to export and fill in a unique **Slot Name** for each.
 5. Rename materials in the Blender Material tab if needed — these become your UMA Overlay names.
@@ -56,7 +62,7 @@ That's it. The Plugin will be installed and ready to use.
 8. Drag both the `.fbx` and `_race.json` into your Unity project.
 
 ### 👕 Create UMA Clothing
-1. Import a clothed CC4 character FBX.
+1. Import a clothed character FBX (CC4 or Daz).
 2. Set **Rig Type** to `Clothing` and select the `_race.json` from your previously exported Race.
 3. Press **Convert**, then select the clothing meshes (race meshes are automatically ignored).
 4. Fill in Slot Names, rename materials as needed, and set a **Wardrobe Slot Type** for each mesh.
