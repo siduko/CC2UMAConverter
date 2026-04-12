@@ -5,10 +5,10 @@ using UnityEditor;
 using UMA;
 using System.Collections.Generic;
 using System;
-using GameCreator.Runtime.Characters;
 using System.Linq;
 
 #if UMAConverterGCInventory
+using GameCreator.Runtime.Characters;
 using GameCreator.Runtime.Common;
 using GameCreator.Runtime.Inventory;
 using vwgamedev.GameCreator.Runtime.UMA;

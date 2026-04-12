@@ -1,4 +1,5 @@
 import bpy
+import bmesh
 import importlib
 import os
 import glob
@@ -8,26 +9,52 @@ if "dataHandling" in locals():
 else:
     from . import dataHandling
 
-def _detect_generation(armature_obj):
-    """Return 'G3', 'G8', 'G8.1', 'G9', or 'unknown' by inspecting bone names."""
-    bones = armature_obj.data.bones.keys()
+_GENERATION_SIGNATURES = {
+    "G3": "abdomen",
+    "G8": "abdomenLower",
+    "G9": "spine1",
+}
 
-    # Genesis 9
-    if "root" in bones and "head_end" in bones:
+
+def _iter_armatures_priority():
+    """Yield armatures with the active armature first (if any)."""
+    active = bpy.context.view_layer.objects.active
+    yielded = set()
+    if active is not None and active.type == "ARMATURE":
+        yielded.add(active.name)
+        yield active
+    for obj in bpy.data.objects:
+        if obj.type == "ARMATURE" and obj.name not in yielded:
+            yield obj
+
+def _detect_generation(armature_obj):
+    """Return 'G3', 'G8', 'G9', or 'unknown' from armature bone fingerprints."""
+    bones = armature_obj.data.bones
+    bone_names = {b.name for b in bones}
+
+    # G9 is the most distinct signature and wins first.
+    if "spine1" in bone_names:
         return "G9"
 
-    # Genesis 8.1
-    if any("facs_" in bone for bone in bones):
-        return "G8.1"
+    hip_children = set()
+    if "hip" in bones:
+        hip_children = {b.name for b in bones["hip"].children}
 
-    # Genesis 8
-    if "lUpperArmTwist" in bones and "head" in bones:
+    has_g3 = "abdomen" in bone_names
+    has_g8 = "abdomenLower" in bone_names
+
+    if has_g3 and not has_g8:
+        return "G3"
+    if has_g8 and not has_g3:
         return "G8"
 
-    # Genesis 3
-    if "head" in bones and "lThigh" in bones and "lUpperArmTwist" not in bones:
+    # Ambiguous rigs can contain both names. Prefer the direct hip child, then G3.
+    if "abdomen" in hip_children:
         return "G3"
-
+    if "abdomenLower" in hip_children:
+        return "G8"
+    if has_g3:
+        return "G3"
     return "unknown"
 
 def check_rig():
@@ -41,19 +68,23 @@ def check_rig():
         }
     """
     result = {"is_daz_rig": False, "is_uma_rig": False, "generation": "unknown"}
-    for obj in bpy.data.objects:
-        if obj.type != "ARMATURE":
-            continue
+    for obj in _iter_armatures_priority():
         bones = obj.data.bones
         # UMA rig: Global bone has Position as a child
-        if "Global" in bones:
-            pos_children = {b.name for b in bones["Global"].children}
-            if "Position" in pos_children:
-                result["is_uma_rig"] = True
-        # Daz rig: 'hip' root bone present, no CC4 bones present
-        if "hip" in bones and "CC_Base_Hip" not in bones:
+        is_uma_for_obj = (
+            "Global" in bones
+            and any(child.name == "Position" for child in bones["Global"].children)
+        )
+        if is_uma_for_obj:
+            result["is_uma_rig"] = True
+
+        # Daz rig: 'hip' present, no CC4 bones, and not already UMA-converted.
+        if not is_uma_for_obj and "hip" in bones and "CC_Base_Hip" not in bones:
             result["is_daz_rig"] = True
-            result["generation"] = _detect_generation(obj)
+            generation = _detect_generation(obj)
+            # Keep the first known generation so later armatures don't overwrite it.
+            if result["generation"] == "unknown" and generation != "unknown":
+                result["generation"] = generation
     return result
 
 
@@ -132,6 +163,70 @@ def apply_transforms_rest_pose():
     bpy.context.area.tag_redraw()
 
 
+def split_meshes_by_material(excluded_mesh_names=None):
+    """Split meshes into one object per material while leaving excluded meshes untouched."""
+    excluded = set(excluded_mesh_names or [])
+    split_meshes = []
+
+    for obj in list(bpy.data.objects):
+        if obj.type != "MESH" or obj.name in excluded:
+            continue
+        if len(obj.material_slots) <= 1:
+            continue
+
+        source_collections = list(obj.users_collection)
+        source_materials = [slot.material for slot in obj.material_slots]
+        created_objects = []
+
+        for material_index, material in enumerate(source_materials):
+            mesh_copy = obj.data.copy()
+            clone = obj.copy()
+            clone.data = mesh_copy
+
+            if source_collections:
+                for collection in source_collections:
+                    collection.objects.link(clone)
+            else:
+                bpy.context.scene.collection.objects.link(clone)
+
+            bm = bmesh.new()
+            bm.from_mesh(mesh_copy)
+            faces_to_delete = [
+                face for face in bm.faces if face.material_index != material_index
+            ]
+            if len(faces_to_delete) == len(bm.faces):
+                bm.free()
+                bpy.data.objects.remove(clone, do_unlink=True)
+                bpy.data.meshes.remove(mesh_copy)
+                continue
+
+            bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+            for face in bm.faces:
+                face.material_index = 0
+            bm.to_mesh(mesh_copy)
+            bm.free()
+            mesh_copy.update()
+
+            material_name = material.name if material else f"Material_{material_index}"
+            safe_material_name = material_name.replace(" ", "_")
+            clone.name = f"{obj.name}_{safe_material_name}"
+
+            mesh_copy.materials.clear()
+            if material:
+                mesh_copy.materials.append(material)
+
+            created_objects.append(clone.name)
+
+        if created_objects:
+            original_mesh = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if original_mesh.users == 0:
+                bpy.data.meshes.remove(original_mesh)
+            split_meshes.extend(created_objects)
+
+    return split_meshes
+
+
 def add_uma_bones():
     """
     Inserts 'Global' and 'Position' bones above the existing 'hip' bone,
@@ -199,6 +294,11 @@ def mesh_to_overlay(mesh_name):
             if mat_slot.material:
                 return mat_slot.material.name
     return ""
+
+
+def _daz_material_to_shared_overlay(material_name):
+    """Return material name as-is for use as overlay name (one material = one overlay)."""
+    return material_name
 
 
 def _find_textures(base_path, search_pattern):

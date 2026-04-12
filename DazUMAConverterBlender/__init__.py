@@ -45,6 +45,15 @@ def init_blender_viewport():
                 break
 
 
+def refresh_mesh_items(context):
+    context.scene.mesh_items.clear()
+    for obj in bpy.data.objects:
+        if obj.type == "MESH":
+            item = context.scene.mesh_items.add()
+            item.name = obj.name
+            item.slot_name = obj.name
+
+
 # ── Panel ────────────────────────────────────────────────────────────────────
 
 class DAZUMA_PT_Panel(Panel):
@@ -122,6 +131,7 @@ class DAZUMA_OT_Convert(Operator):
     def execute(self, context):
         init_blender_viewport()
         dazconverter.apply_transforms_rest_pose()
+        race_data = None
 
         if context.scene.rig_type == "race":
             hip_height = dazconverter.get_daz_hip_height_global()
@@ -144,6 +154,11 @@ class DAZUMA_OT_Convert(Operator):
             dazconverter.adjust_daz_hip_height(-difference)
 
         dazconverter.add_uma_bones()
+
+        excluded_meshes = race_data.meshes if context.scene.rig_type == "clothing" and race_data is not None else []
+        dazconverter.split_meshes_by_material(excluded_meshes)
+
+        refresh_mesh_items(context)
         self.report({"INFO"}, "Conversion complete.")
         return {"FINISHED"}
 
@@ -161,11 +176,7 @@ class DAZUMA_OT_Import(Operator, ImportHelper):
             "automatic_bone_orientation": False,
         }
         bpy.ops.import_scene.fbx(filepath=self.filepath, **import_options)
-        bpy.context.scene.mesh_items.clear()
-        for obj in bpy.data.objects:
-            if obj.type == "MESH":
-                item = bpy.context.scene.mesh_items.add()
-                item.name = obj.name
+        refresh_mesh_items(context)
         file_dir = os.path.dirname(self.filepath)
         dazconverter.setup_daz_materials(file_dir)
         self.report({"INFO"}, "FBX imported successfully.")
@@ -223,10 +234,11 @@ class DAZUMA_OT_Export(Operator, ExportHelper):
             race_data.slots = []
             for item in context.scene.mesh_items:
                 if item.selected:
+                    material_overlay = dazconverter.mesh_to_overlay(item.name)
                     slot = dataHandling.UMAData_Slot(
                         item.slot_name,
                         item.name,
-                        dazconverter.mesh_to_overlay(item.name),
+                        material_overlay,
                     )
                     race_data.slots.append(slot)
             dataHandling.save_to_json_file(race_data, filename_no_ext + "_race.json")
@@ -260,7 +272,7 @@ class DAZUMA_OT_Export(Operator, ExportHelper):
                 for obj in [bpy.data.objects.get(item.name)]
                 if obj is not None
             ]
-            _save_textures(self.filepath, selected_objects, filename_no_ext)
+            _save_textures(self.filepath, selected_objects, filename_no_ext, context.scene.rig_type)
 
         self.report({"INFO"}, "Export successful.")
         return {"FINISHED"}
@@ -271,7 +283,7 @@ class DAZUMA_OT_Export(Operator, ExportHelper):
 
 # ── Texture export helper ────────────────────────────────────────────────────
 
-def _save_textures(filepath, selected_objects, custom_folder_name):
+def _save_textures(filepath, selected_objects, custom_folder_name, rig_type=None):
     base_dir = os.path.dirname(filepath)
     texture_dir = os.path.join(base_dir, custom_folder_name, "Textures")
     os.makedirs(texture_dir, exist_ok=True)
@@ -281,12 +293,13 @@ def _save_textures(filepath, selected_objects, custom_folder_name):
         for slot in obj.material_slots:
             if not slot.material or not slot.material.use_nodes:
                 continue
+            material_name = slot.material.name
             for node in slot.material.node_tree.nodes:
                 if node.type == "TEX_IMAGE" and node.image:
                     src = bpy.path.abspath(node.image.filepath)
                     if os.path.isfile(src):
                         suffix = os.path.basename(src).split("_")[-1]
-                        dest_name = f"{slot.material.name}_{suffix}"
+                        dest_name = f"{material_name}_{suffix}"
                         shutil.copy(src, os.path.join(texture_dir, dest_name))
 
 
