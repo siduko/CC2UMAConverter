@@ -46,6 +46,7 @@ namespace UMAConverter
 
                         modelImporter.animationType = ModelImporterAnimationType.Human;
                         modelImporter.autoGenerateAvatarMappingIfUnspecified = true;
+                        modelImporter.optimizeGameObjects = false;
 
 
                         // Call the convert method

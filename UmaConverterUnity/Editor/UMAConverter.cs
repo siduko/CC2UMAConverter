@@ -7,6 +7,8 @@ using UMA;
 using UMA.Editors;
 using UMA.CharacterSystem;
 using UMAConverter;
+using System;
+using System.Linq;
 
 namespace UMAConverter
 {
@@ -27,6 +29,17 @@ namespace UMAConverter
         GameObject model = null; // The imported model, we are taking our meshes from.
 
         private bool addToGlobalLibrary = true; // If true, the created assets will be added to the global library.
+
+        private static readonly string[] RaceSlotPriorityHints = new string[]
+        {
+            "torso",
+            "body",
+            "hips",
+            "hip",
+            "pelvis",
+            "face",
+            "head"
+        };
 
         /// <summary>
         /// Initializes a new instance of the <see cref="T:UMAConverter"/> class.
@@ -121,8 +134,23 @@ namespace UMAConverter
             SkinnedMeshRenderer slotMesh = model.transform.Find(slot.mesh).GetComponent<SkinnedMeshRenderer>(); // The skinned mesh renderer for the slot
             UMAMaterial material = UMAConverterSettings.Instance.defaultMaterial; // TODO: Implement a way to decide which UMAMaterial should be used as default
             SkinnedMeshRenderer seamsMesh = null; //TODO: Implement a way that our Blender Plugin exports a seams mesh and tag it in the json, if a slot has seams
-            List<string> keepBoneNames = new List<string>(); // The bones which should be kept, we are not using this feature
-            string rootBone = "Global"; // Its by default "Global" and there is currently no need to change it
+            List<string> keepBoneNames = GetModelBoneNames();
+            string rootBone = slotMesh.rootBone != null ? slotMesh.rootBone.name : "hip";
+            if (slotMesh.bones == null || !slotMesh.bones.Any(b => b != null && b.name == rootBone))
+            {
+                if (keepBoneNames.Contains("Global"))
+                {
+                    rootBone = "Global";
+                }
+                else if (keepBoneNames.Contains("Position"))
+                {
+                    rootBone = "Position";
+                }
+                else
+                {
+                    rootBone = "hip";
+                }
+            }
             bool binarySerialization = false; // We are not using binary serialization
             bool calcTangents = true; // We are calculating tangents by default
             string stripBones = ""; // We are not stripping bones
@@ -159,24 +187,12 @@ namespace UMAConverter
 
             if (!string.IsNullOrEmpty(slot.overlay))
             {
-                // We have to create an overlay but first we have to check if the overlay is a shared one
-                if (slot.isSharedOverlay(this.data))
-                { // It is a shared one, check if there is one in general slot directory
-                    string overlayPath = workingDirectory + "/Overlays/" + slot.overlay;
-                    overlayAsset = AssetDatabase.LoadAssetAtPath<OverlayDataAsset>(overlayPath + ".asset");
-
-                    if (overlayAsset == null)
-                    {
-                        overlayAsset = CreateOverlay(overlayPath, slotAsset, slotName, slot.overlay);
-                    }
-                } else
-                { // Its not Shared, so it belongs directly to the slot directory. Create a Overlay there.
-                    string overlayPath = workingDirectory + "/Slots/" + slot.name + "/" + slot.overlay;
-                    overlayAsset = AssetDatabase.LoadAssetAtPath<OverlayDataAsset>(overlayPath + ".asset"); // Check if the overlay already exists
-                    if (overlayAsset == null)
-                    {
-                        overlayAsset = CreateOverlay(overlayPath, slotAsset, slotName, slot.overlay);
-                    }
+                // Keep overlays separated per slot but store all assets in the Overlays folder.
+                string overlayPath = workingDirectory + "/Overlays/" + slot.name + "_" + slot.overlay;
+                overlayAsset = AssetDatabase.LoadAssetAtPath<OverlayDataAsset>(overlayPath + ".asset");
+                if (overlayAsset == null)
+                {
+                    overlayAsset = CreateOverlay(overlayPath, slotAsset, slotName, slot.overlay);
                 }
             } else
             {
@@ -223,12 +239,17 @@ namespace UMAConverter
                 asset.overlayName = overlayName;
             }
             asset.material = slotAsset.material;
-            Texture[] textures = GetOverlayTextureList(overlayName, slotAsset.material);
-            asset.textureList = GetOverlayTextureList(overlayName, UMAConverterSettings.Instance.defaultMaterial);
+            asset.textureList = GetOverlayTextureList(overlayName, slotAsset.material);
 
 
             AssetDatabase.CreateAsset(asset, overlayPath +".asset");
             AssetDatabase.SaveAssets();
+
+            if (addToGlobalLibrary)
+            {
+                UMAAssetIndexer.Instance.EvilAddAsset(typeof(OverlayDataAsset), asset);
+            }
+
             return asset;
 
         }
@@ -245,16 +266,69 @@ namespace UMAConverter
         public Texture[] GetOverlayTextureList(string overlayName, UMAMaterial umaMaterial)
         {
             List<Texture> textures = new List<Texture>();
+            string textureFolder = workingDirectory + "/Textures";
+            string[] textureGuids = AssetDatabase.FindAssets("t:Texture2D", new string[] { textureFolder });
+
+            // Build a quick lookup so we can match multiple naming conventions.
+            Dictionary<string, Texture> textureByFileName = new Dictionary<string, Texture>(StringComparer.OrdinalIgnoreCase);
+            List<string> allTextureNames = new List<string>();
+
+            foreach (string guid in textureGuids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                Texture texture = AssetDatabase.LoadAssetAtPath<Texture>(path);
+                if (texture == null)
+                {
+                    continue;
+                }
+
+                string fileName = Path.GetFileNameWithoutExtension(path);
+                if (!textureByFileName.ContainsKey(fileName))
+                {
+                    textureByFileName[fileName] = texture;
+                }
+
+                allTextureNames.Add(fileName);
+            }
+
+            string overlayPrefix = overlayName + "_";
+            Texture sharedOverlayFallback = null;
+            foreach (string fileName in allTextureNames)
+            {
+                if (fileName.StartsWith(overlayPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    sharedOverlayFallback = textureByFileName[fileName];
+                    break;
+                }
+            }
+
             foreach (UMAMaterial.MaterialChannel channel in umaMaterial.channels)
             {
-                string textureName = overlayName + "_" + channel.materialPropertyName.Replace("_", "");
-                string[] textureGUIDs = AssetDatabase.FindAssets(textureName);
-                if (textureGUIDs.Length > 0)
+                Texture channelTexture = null;
+
+                string sanitizedChannelName = channel.materialPropertyName.Replace("_", "");
+                string exactWithUnderscore = overlayName + "_" + channel.materialPropertyName;
+                string exactSanitized = overlayName + "_" + sanitizedChannelName;
+
+                if (textureByFileName.TryGetValue(exactWithUnderscore, out channelTexture) ||
+                    textureByFileName.TryGetValue(exactSanitized, out channelTexture))
                 {
-                    string texturePath = AssetDatabase.GUIDToAssetPath(textureGUIDs[0]);
-                    Texture texture = AssetDatabase.LoadAssetAtPath<Texture>(texturePath);
-                    textures.Add(texture);
+                    textures.Add(channelTexture);
+                    continue;
                 }
+
+                // Daz/CC exports often use UDIM naming like Skin_1001; use it as a fallback.
+                if (channel.materialPropertyName == "_BaseMap" || channel.materialPropertyName == "_MainTex")
+                {
+                    if (textureByFileName.TryGetValue(overlayName + "_1001", out channelTexture))
+                    {
+                        textures.Add(channelTexture);
+                        continue;
+                    }
+                }
+
+                // Keep list alignment with channels by inserting null when a channel texture is missing.
+                textures.Add(sharedOverlayFallback);
             }
             return textures.ToArray();  
         }
@@ -294,6 +368,7 @@ namespace UMAConverter
             if (addToGlobalLibrary)
             {
                 UMAAssetIndexer.Instance.EvilAddAsset(typeof(RaceData), raceData);
+                EditorUtility.SetDirty(UMAAssetIndexer.Instance);
             }
 
             // ----------------- Race Text Recipe -----------------
@@ -305,7 +380,7 @@ namespace UMAConverter
 
 
             int index = 0;
-            foreach(UMAData_RaceSlots raceSlot in raceSlots)
+            foreach(UMAData_RaceSlots raceSlot in GetOrderedRaceSlots())
             {
                 SlotData slotData = new SlotData(raceSlot.slot);
                 OverlayData overlayData = new OverlayData(raceSlot.overlay);
@@ -314,6 +389,7 @@ namespace UMAConverter
                 index++;
             }
             recipe.SetRace(raceData);
+            AssetDatabase.SaveAssets();
             asset.Save(recipe, UMAContextBase.Instance);
             asset.DisplayValue = (this.data as UMAData_Race).name + "_TextRecipe";
 
@@ -350,6 +426,35 @@ namespace UMAConverter
             AssetDatabase.Refresh();
             return true;
 
+        }
+
+        private List<string> GetModelBoneNames()
+        {
+            return model.GetComponentsInChildren<Transform>(true)
+                .Select(transform => transform.name)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private IEnumerable<UMAData_RaceSlots> GetOrderedRaceSlots()
+        {
+            return raceSlots
+                .OrderBy(raceSlot => GetRaceSlotPriority(raceSlot.slot != null ? raceSlot.slot.slotName : string.Empty))
+                .ThenBy(raceSlot => raceSlot.slot != null ? raceSlot.slot.slotName : string.Empty, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private int GetRaceSlotPriority(string slotName)
+        {
+            string normalizedSlotName = slotName != null ? slotName.ToLowerInvariant() : string.Empty;
+            for (int index = 0; index < RaceSlotPriorityHints.Length; index++)
+            {
+                if (normalizedSlotName.Contains(RaceSlotPriorityHints[index]))
+                {
+                    return index;
+                }
+            }
+
+            return RaceSlotPriorityHints.Length;
         }
 
         /// <summary>
