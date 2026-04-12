@@ -73,6 +73,7 @@ class DAZUMA_PT_Panel(Panel):
             gen = rig_status["generation"]
             layout.label(text=f"Daz Rig found ({gen})", icon="INFO")
             layout.prop(context.scene, "rig_type", text="Rig Type")
+            layout.prop(context.scene, "split_mode", text="Mesh Mode")
 
             if context.scene.rig_type == "clothing":
                 box = layout.box()
@@ -156,7 +157,8 @@ class DAZUMA_OT_Convert(Operator):
         dazconverter.add_uma_bones()
 
         excluded_meshes = race_data.meshes if context.scene.rig_type == "clothing" and race_data is not None else []
-        dazconverter.split_meshes_by_material(excluded_meshes)
+        if context.scene.split_mode == "materials":
+            dazconverter.split_meshes_by_material(excluded_meshes)
 
         refresh_mesh_items(context)
         self.report({"INFO"}, "Conversion complete.")
@@ -307,6 +309,7 @@ def _save_textures(filepath, selected_objects, custom_folder_name, rig_type=None
 
 def register():
     gui.register_rig_type_selector()
+    gui.register_split_mode_selector()
     gui.register_json_file_field()
     gui.register_race_wizard()
     gui.register_mesh_items()
@@ -318,6 +321,7 @@ def register():
 
 def unregister():
     gui.unregister_rig_type_selector()
+    gui.unregister_split_mode_selector()
     gui.unregister_json_file_field()
     gui.unregister_race_wizard()
     gui.unregister_mesh_items()

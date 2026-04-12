@@ -46,9 +46,25 @@ def register_rig_type_selector():
         ],
         default='race',
     )
+
+
+def register_split_mode_selector():
+    bpy.types.Scene.split_mode = bpy.props.EnumProperty(
+        name="Split Mode",
+        description="Choose how meshes should be prepared during conversion",
+        items=[
+            ('materials', "Separate by Materials", "Split each mesh into one object per material"),
+            ('object', "By Object", "Keep imported mesh objects as they are"),
+        ],
+        default='materials',
+    )
     
 def unregister_rig_type_selector():
     del bpy.types.Scene.rig_type
+
+
+def unregister_split_mode_selector():
+    del bpy.types.Scene.split_mode
 
 def register_json_file_field():
     bpy.types.Scene.json_file_path = bpy.props.StringProperty(
