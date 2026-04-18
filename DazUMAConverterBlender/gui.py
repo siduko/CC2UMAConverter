@@ -95,3 +95,53 @@ def register_mesh_items():
 def unregister_mesh_items():
     bpy.utils.unregister_class(MeshItem)
     del bpy.types.Scene.mesh_items
+
+
+def register_select_all():
+    bpy.types.Scene.select_all_meshes = bpy.props.BoolProperty(
+        name="Select All Meshes",
+        description="Select or deselect all available meshes for export",
+        default=True
+    )
+
+
+def unregister_select_all():
+    del bpy.types.Scene.select_all_meshes
+
+
+def register_batch_rename_pattern():
+    bpy.types.Scene.batch_rename_pattern = bpy.props.StringProperty(
+        name="Rename Pattern",
+        description="Pattern for batch renaming slots. Use {mesh} for mesh name placeholder",
+        default="{mesh}"
+    )
+    
+    bpy.types.Scene.batch_rename_mode = bpy.props.EnumProperty(
+        name="Rename Mode",
+        description="Choose how to rename slots",
+        items=[
+            ('simple', "Simple Pattern", "Use {mesh} placeholder in pattern"),
+            ('search_replace', "Search & Replace", "Find text and replace it"),
+            ('delete', "Delete Pattern", "Remove matching text from slot name"),
+        ],
+        default='simple'
+    )
+    
+    bpy.types.Scene.batch_search_text = bpy.props.StringProperty(
+        name="Search Text",
+        description="Text to search for in slot names",
+        default=""
+    )
+    
+    bpy.types.Scene.batch_replace_text = bpy.props.StringProperty(
+        name="Replace Text",
+        description="Text to replace with (leave empty to delete)",
+        default=""
+    )
+
+
+def unregister_batch_rename_pattern():
+    del bpy.types.Scene.batch_rename_pattern
+    del bpy.types.Scene.batch_rename_mode
+    del bpy.types.Scene.batch_search_text
+    del bpy.types.Scene.batch_replace_text
