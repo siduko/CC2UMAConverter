@@ -216,6 +216,8 @@ namespace UMAConverter
 
         public OverlayDataAsset CreateOverlay(string overlayPath, SlotDataAsset slotAsset, string slotName, string overlayName = null)
         {
+            Debug.Log("[UMAConverter] CreateOverlay start: overlayPath='" + overlayPath + "', slotName='" + slotName + "', overlayName='" + overlayName + "'");
+
             OverlayDataAsset asset = ScriptableObject.CreateInstance<OverlayDataAsset>();
             asset.overlayName = slotName; // + "_Overlay";
             if(overlayName != null)
@@ -223,8 +225,11 @@ namespace UMAConverter
                 asset.overlayName = overlayName;
             }
             asset.material = slotAsset.material;
-            Texture[] textures = GetOverlayTextureList(overlayName, slotAsset.material);
-            asset.textureList = GetOverlayTextureList(overlayName, UMAConverterSettings.Instance.defaultMaterial);
+            Texture[] slotMaterialTextures = GetOverlayTextureList(overlayName, slotAsset.material);
+            Texture[] defaultMaterialTextures = GetOverlayTextureList(overlayName, UMAConverterSettings.Instance.defaultMaterial);
+            asset.textureList = defaultMaterialTextures;
+
+            Debug.Log("[UMAConverter] CreateOverlay textures resolved: slotMaterial=" + slotMaterialTextures.Length + ", defaultMaterial=" + defaultMaterialTextures.Length + ", assigned=" + asset.textureList.Length);
 
 
             AssetDatabase.CreateAsset(asset, overlayPath +".asset");
@@ -246,11 +251,22 @@ namespace UMAConverter
         {
             List<Texture> textures = new List<Texture>();
             string[] searchFolders = GetTextureSearchFolders();
+            int resolvedTextureCount = 0;
+
+            Debug.Log("[UMAConverter] GetOverlayTextureList start: overlayName='" + overlayName + "', material='" + (umaMaterial != null ? umaMaterial.name : "null") + "', channels=" + (umaMaterial != null ? umaMaterial.channels.Length : 0) + ", searchFolders=" + string.Join(",", searchFolders));
+
+            if (umaMaterial == null)
+            {
+                Debug.LogWarning("[UMAConverter] GetOverlayTextureList aborted: umaMaterial is null");
+                return textures.ToArray();
+            }
 
             foreach (UMAMaterial.MaterialChannel channel in umaMaterial.channels)
             {
                 string channelName = channel.materialPropertyName.Replace("_", "");
                 List<string> candidates = GetTextureCandidatesForChannel(channelName);
+
+                Debug.Log("[UMAConverter] Channel '" + channel.materialPropertyName + "' candidates: " + string.Join(",", candidates));
 
                 Texture texture = null;
                 foreach (string candidate in candidates)
@@ -259,15 +275,24 @@ namespace UMAConverter
                     texture = FindTextureByName(textureName, searchFolders);
                     if (texture != null)
                     {
+                        Debug.Log("[UMAConverter] Matched channel '" + channel.materialPropertyName + "' with candidate '" + candidate + "' => texture '" + texture.name + "'");
                         break;
                     }
                 }
 
                 if (texture != null)
                 {
-                    textures.Add(texture);
+                    resolvedTextureCount++;
                 }
+                else
+                {
+                    Debug.LogWarning("[UMAConverter] No texture found for channel '" + channel.materialPropertyName + "' (overlay='" + overlayName + "')");
+                }
+
+                textures.Add(texture);
             }
+
+            Debug.Log("[UMAConverter] GetOverlayTextureList end: resolvedTextures=" + resolvedTextureCount + ", returnedSlots=" + textures.Count);
             return textures.ToArray();  
         }
 

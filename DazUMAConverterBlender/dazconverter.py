@@ -112,7 +112,6 @@ def _debug_log(message):
 
 def _iter_armatures_priority():
     """Yield armatures with the active armature first (if any)."""
-    _debug_log("_iter_armatures_priority called")
     active = bpy.context.view_layer.objects.active
     yielded = set()
     if active is not None and active.type == "ARMATURE":
@@ -124,7 +123,6 @@ def _iter_armatures_priority():
 
 def _detect_generation(armature_obj):
     """Return 'G3', 'G8', 'G9', or 'unknown' from armature bone fingerprints."""
-    _debug_log(f"_detect_generation called for armature={armature_obj.name}")
     bones = armature_obj.data.bones
     bone_names = {b.name for b in bones}
 
@@ -357,7 +355,6 @@ def check_rig():
             'generation': str
         }
     """
-    _debug_log("check_rig called")
     result = {"is_daz_rig": False, "is_uma_rig": False, "generation": "unknown"}
     for obj in _iter_armatures_priority():
         bones = obj.data.bones
@@ -403,9 +400,6 @@ def mesh_to_overlay(mesh_name):
 
 
 def find_textures_custom_path(base_path, search_pattern):
-    _debug_log(
-        f"find_textures_custom_path called with base_path={base_path}, search_pattern={search_pattern}"
-    )
     pattern = os.path.join(base_path, "**", search_pattern)
     files = glob.glob(pattern, recursive=True)
     if not files and "." not in os.path.basename(search_pattern):
