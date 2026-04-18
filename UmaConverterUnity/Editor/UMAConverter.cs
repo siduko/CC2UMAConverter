@@ -127,6 +127,33 @@ namespace UMAConverter
             bool calcTangents = true; // We are calculating tangents by default
             string stripBones = ""; // We are not stripping bones
 
+            if (slotMesh != null && slotMesh.sharedMaterials != null && slotMesh.sharedMaterials.Length > 1)
+            {
+                Debug.LogWarning("[UMAConverter] Slot '" + slot.name + "' uses " + slotMesh.sharedMaterials.Length + " source materials but only one overlay is currently exported ('" + slot.overlay + "'). This can cause wrong overlays (for example teeth textures on body).");
+            }
+
+            List<string> sourceMaterialNames = new List<string>();
+            if (slotMesh != null && slotMesh.sharedMaterials != null)
+            {
+                foreach (Material sourceMaterial in slotMesh.sharedMaterials)
+                {
+                    sourceMaterialNames.Add(sourceMaterial != null ? sourceMaterial.name : "<null>");
+                }
+            }
+
+            Debug.Log("[UMAConverter] Slot '" + slot.name + "' source materials: count=" + sourceMaterialNames.Count + ", names=[" + string.Join(",", sourceMaterialNames) + "], primaryOverlay='" + slot.overlay + "'.");
+
+            if (slotMesh != null && slotMesh.sharedMesh != null)
+            {
+                int totalTriangles = 0;
+                for (int subMeshIndex = 0; subMeshIndex < slotMesh.sharedMesh.subMeshCount; subMeshIndex++)
+                {
+                    totalTriangles += (int)slotMesh.sharedMesh.GetIndexCount(subMeshIndex) / 3;
+                }
+
+                Debug.Log("[UMAConverter] Slot '" + slot.name + "' mesh stats: mesh='" + slotMesh.sharedMesh.name + "', vertices=" + slotMesh.sharedMesh.vertexCount + ", subMeshes=" + slotMesh.sharedMesh.subMeshCount + ", triangles=" + totalTriangles + ".");
+            }
+
             
             SlotBuilderParameters slotBuilderParameters = new SlotBuilderParameters();
             slotBuilderParameters.slotFolder = slotFolder;
@@ -156,31 +183,48 @@ namespace UMAConverter
             // ----------------- Overlay -----------------
 
             OverlayDataAsset overlayAsset = null;
+            List<OverlayDataAsset> overlaysForSlot = new List<OverlayDataAsset>();
 
             if (!string.IsNullOrEmpty(slot.overlay))
             {
-                // We have to create an overlay but first we have to check if the overlay is a shared one
-                if (slot.isSharedOverlay(this.data))
-                { // It is a shared one, check if there is one in general slot directory
-                    string overlayPath = workingDirectory + "/Overlays/" + slot.overlay;
-                    overlayAsset = AssetDatabase.LoadAssetAtPath<OverlayDataAsset>(overlayPath + ".asset");
-
-                    if (overlayAsset == null)
-                    {
-                        overlayAsset = CreateOverlay(overlayPath, slotAsset, slotName, slot.overlay);
-                    }
-                } else
-                { // Its not Shared, so it belongs directly to the slot directory. Create a Overlay there.
-                    string overlayPath = workingDirectory + "/Slots/" + slot.name + "/" + slot.overlay;
-                    overlayAsset = AssetDatabase.LoadAssetAtPath<OverlayDataAsset>(overlayPath + ".asset"); // Check if the overlay already exists
-                    if (overlayAsset == null)
-                    {
-                        overlayAsset = CreateOverlay(overlayPath, slotAsset, slotName, slot.overlay);
-                    }
+                overlayAsset = GetOrCreateOverlayAsset(slot, slotAsset, slotName, slot.overlay, true);
+                if (overlayAsset != null)
+                {
+                    overlaysForSlot.Add(overlayAsset);
                 }
             } else
             {
                 Debug.Log("No overlay found for slot " + slot.name);
+            }
+
+            if (slotMesh != null && slotMesh.sharedMaterials != null && slotMesh.sharedMaterials.Length > 1)
+            {
+                List<string> additionalOverlayNames = GetAdditionalOverlayNames(slot.overlay, slotMesh);
+                foreach (string additionalOverlayName in additionalOverlayNames)
+                {
+                    OverlayDataAsset additionalOverlay = GetOrCreateOverlayAsset(slot, slotAsset, slotName, additionalOverlayName, false);
+                    if (additionalOverlay != null && !overlaysForSlot.Contains(additionalOverlay))
+                    {
+                        overlaysForSlot.Add(additionalOverlay);
+                    }
+                }
+
+            }
+
+            List<string> resolvedOverlayNames = new List<string>();
+            foreach (OverlayDataAsset resolvedOverlay in overlaysForSlot)
+            {
+                if (resolvedOverlay != null)
+                {
+                    resolvedOverlayNames.Add(resolvedOverlay.overlayName);
+                }
+            }
+
+            Debug.Log("[UMAConverter] Slot '" + slot.name + "' resolved overlays: count=" + resolvedOverlayNames.Count + ", names=[" + string.Join(",", resolvedOverlayNames) + "].");
+
+            if (overlayAsset == null && overlaysForSlot.Count > 0)
+            {
+                overlayAsset = overlaysForSlot[0];
             }
 
             // ----------------- Wardrobe Recipe -----------------
@@ -205,7 +249,7 @@ namespace UMAConverter
                 Debug.LogWarning("That should not happen.");
             }
 
-            raceSlots.Add(new UMAData_RaceSlots(slotAsset, overlayAsset));
+            raceSlots.Add(new UMAData_RaceSlots(slotAsset, overlaysForSlot));
 
 
 
@@ -214,28 +258,119 @@ namespace UMAConverter
 
         }
 
+        private OverlayDataAsset GetOrCreateOverlayAsset(UMAData_Slot slot, SlotDataAsset slotAsset, string slotName, string overlayName, bool allowSharedPath)
+        {
+            if (string.IsNullOrEmpty(overlayName))
+            {
+                return null;
+            }
+
+            bool useSharedPath = allowSharedPath && slot.isSharedOverlay(this.data) && overlayName == slot.overlay;
+            string overlayPath = useSharedPath
+                ? workingDirectory + "/Overlays/" + overlayName
+                : workingDirectory + "/Slots/" + slot.name + "/" + overlayName;
+
+            OverlayDataAsset overlayAsset = AssetDatabase.LoadAssetAtPath<OverlayDataAsset>(overlayPath + ".asset");
+            if (overlayAsset == null)
+            {
+                overlayAsset = CreateOverlay(overlayPath, slotAsset, slotName, overlayName);
+            }
+            else
+            {
+                UpdateOverlay(overlayAsset, overlayPath, slotAsset, slotName, overlayName);
+            }
+
+            return overlayAsset;
+        }
+
+        private List<string> GetAdditionalOverlayNames(string primaryOverlayName, SkinnedMeshRenderer slotMesh)
+        {
+            List<string> overlayNames = new List<string>();
+            if (slotMesh == null || slotMesh.sharedMaterials == null)
+            {
+                return overlayNames;
+            }
+
+            foreach (Material sourceMaterial in slotMesh.sharedMaterials)
+            {
+                if (sourceMaterial == null || string.IsNullOrEmpty(sourceMaterial.name))
+                {
+                    continue;
+                }
+
+                if (string.Equals(sourceMaterial.name, primaryOverlayName, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                bool alreadyAdded = false;
+                foreach (string overlayName in overlayNames)
+                {
+                    if (string.Equals(overlayName, sourceMaterial.name, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        alreadyAdded = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyAdded)
+                {
+                    overlayNames.Add(sourceMaterial.name);
+                }
+            }
+
+            return overlayNames;
+        }
+
         public OverlayDataAsset CreateOverlay(string overlayPath, SlotDataAsset slotAsset, string slotName, string overlayName = null)
         {
             Debug.Log("[UMAConverter] CreateOverlay start: overlayPath='" + overlayPath + "', slotName='" + slotName + "', overlayName='" + overlayName + "'");
 
             OverlayDataAsset asset = ScriptableObject.CreateInstance<OverlayDataAsset>();
-            asset.overlayName = slotName; // + "_Overlay";
-            if(overlayName != null)
-            {
-                asset.overlayName = overlayName;
-            }
-            asset.material = slotAsset.material;
-            Texture[] slotMaterialTextures = GetOverlayTextureList(overlayName, slotAsset.material);
-            Texture[] defaultMaterialTextures = GetOverlayTextureList(overlayName, UMAConverterSettings.Instance.defaultMaterial);
-            asset.textureList = defaultMaterialTextures;
-
-            Debug.Log("[UMAConverter] CreateOverlay textures resolved: slotMaterial=" + slotMaterialTextures.Length + ", defaultMaterial=" + defaultMaterialTextures.Length + ", assigned=" + asset.textureList.Length);
+            ApplyOverlayData(asset, slotAsset, slotName, overlayName, "CreateOverlay");
 
 
             AssetDatabase.CreateAsset(asset, overlayPath +".asset");
             AssetDatabase.SaveAssets();
             return asset;
 
+        }
+
+        private void UpdateOverlay(OverlayDataAsset asset, string overlayPath, SlotDataAsset slotAsset, string slotName, string overlayName)
+        {
+            Debug.Log("[UMAConverter] UpdateOverlay start: overlayPath='" + overlayPath + "', slotName='" + slotName + "', overlayName='" + overlayName + "'");
+            ApplyOverlayData(asset, slotAsset, slotName, overlayName, "UpdateOverlay");
+            EditorUtility.SetDirty(asset);
+            AssetDatabase.SaveAssetIfDirty(asset);
+        }
+
+        private void ApplyOverlayData(OverlayDataAsset asset, SlotDataAsset slotAsset, string slotName, string overlayName, string source)
+        {
+            asset.overlayName = slotName;
+            if (!string.IsNullOrEmpty(overlayName))
+            {
+                asset.overlayName = overlayName;
+            }
+
+            asset.material = slotAsset.material;
+
+            string textureOverlayName = !string.IsNullOrEmpty(overlayName) ? overlayName : slotName;
+            Texture[] slotMaterialTextures = GetOverlayTextureList(textureOverlayName, slotAsset.material);
+            Texture[] defaultMaterialTextures = GetOverlayTextureList(textureOverlayName, UMAConverterSettings.Instance.defaultMaterial);
+
+            bool hasSlotTextures = false;
+            foreach (Texture texture in slotMaterialTextures)
+            {
+                if (texture != null)
+                {
+                    hasSlotTextures = true;
+                    break;
+                }
+            }
+
+            asset.textureList = hasSlotTextures ? slotMaterialTextures : defaultMaterialTextures;
+
+            Debug.Log("[UMAConverter] " + source + " textures resolved: overlay='" + textureOverlayName + "', slotMaterial=" + slotMaterialTextures.Length + ", defaultMaterial=" + defaultMaterialTextures.Length + ", assigned=" + asset.textureList.Length + ", usedSlotTextures=" + hasSlotTextures);
         }
 
         /// <summary>
@@ -321,16 +456,51 @@ namespace UMAConverter
                 ? AssetDatabase.FindAssets(textureName + " t:Texture", searchFolders)
                 : AssetDatabase.FindAssets(textureName + " t:Texture");
 
+            List<string> exactMatchPaths = new List<string>();
+
             foreach (string guid in textureGUIDs)
             {
                 string texturePath = AssetDatabase.GUIDToAssetPath(guid);
                 if (string.Equals(Path.GetFileNameWithoutExtension(texturePath), textureName, System.StringComparison.OrdinalIgnoreCase))
                 {
-                    return AssetDatabase.LoadAssetAtPath<Texture>(texturePath);
+                    exactMatchPaths.Add(texturePath);
                 }
             }
 
-            return null;
+            if (exactMatchPaths.Count == 0)
+            {
+                return null;
+            }
+
+            string selectedPath = exactMatchPaths[0];
+            if (!string.IsNullOrEmpty(workingDirectory))
+            {
+                string preferredPrefix = workingDirectory + "/Textures/";
+                foreach (string candidatePath in exactMatchPaths)
+                {
+                    if (candidatePath.StartsWith(preferredPrefix, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        selectedPath = candidatePath;
+                        break;
+                    }
+                }
+            }
+
+            if (exactMatchPaths.Count > 1)
+            {
+                Debug.LogWarning("[UMAConverter] Multiple exact textures found for '" + textureName + "': [" + string.Join(",", exactMatchPaths) + "]. Selected='" + selectedPath + "'.");
+            }
+
+            Texture resolvedTexture = AssetDatabase.LoadAssetAtPath<Texture>(selectedPath);
+            Texture2D resolvedTexture2D = resolvedTexture as Texture2D;
+            string sizeInfo = resolvedTexture2D != null
+                ? resolvedTexture2D.width + "x" + resolvedTexture2D.height
+                : "unknown";
+            Hash128 dependencyHash = AssetDatabase.GetAssetDependencyHash(selectedPath);
+
+            Debug.Log("[UMAConverter] Resolved texture '" + textureName + "' => path='" + selectedPath + "', size='" + sizeInfo + "', hash='" + dependencyHash + "'.");
+            return resolvedTexture;
+
         }
 
         private List<string> GetTextureCandidatesForChannel(string channelName)
@@ -422,8 +592,22 @@ namespace UMAConverter
             foreach(UMAData_RaceSlots raceSlot in raceSlots)
             {
                 SlotData slotData = new SlotData(raceSlot.slot);
-                OverlayData overlayData = new OverlayData(raceSlot.overlay);
-                slotData.AddOverlay(overlayData);
+
+                if (raceSlot.overlays != null && raceSlot.overlays.Count > 0)
+                {
+                    foreach (OverlayDataAsset overlayAsset in raceSlot.overlays)
+                    {
+                        if (overlayAsset != null)
+                        {
+                            slotData.AddOverlay(new OverlayData(overlayAsset));
+                        }
+                    }
+                }
+                else if (raceSlot.overlay != null)
+                {
+                    slotData.AddOverlay(new OverlayData(raceSlot.overlay));
+                }
+
                 recipe.SetSlot(index, slotData);
                 index++;
             }
@@ -586,11 +770,24 @@ namespace UMAConverter
     {
         public SlotDataAsset slot;
         public OverlayDataAsset overlay;
+        public List<OverlayDataAsset> overlays;
 
         public UMAData_RaceSlots(SlotDataAsset slot, OverlayDataAsset overlay)
         {
             this.slot = slot;
             this.overlay = overlay;
+            this.overlays = new List<OverlayDataAsset>();
+            if (overlay != null)
+            {
+                this.overlays.Add(overlay);
+            }
+        }
+
+        public UMAData_RaceSlots(SlotDataAsset slot, List<OverlayDataAsset> overlays)
+        {
+            this.slot = slot;
+            this.overlays = overlays ?? new List<OverlayDataAsset>();
+            this.overlay = this.overlays.Count > 0 ? this.overlays[0] : null;
         }
     }
 }
