@@ -205,7 +205,7 @@ class DAZUMA_OT_Import(Operator, ImportHelper):
         }
         bpy.ops.import_scene.fbx(filepath=self.filepath, **import_options)
         refresh_mesh_items(context)
-        file_dir = os.path.dirname(self.filepath)
+        file_dir = os.path.splitext(self.filepath)[0] + ".images"
         dazconverter.setup_daz_materials(file_dir)
         self.report({"INFO"}, "FBX imported successfully.")
         return {"FINISHED"}

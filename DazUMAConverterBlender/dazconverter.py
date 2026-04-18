@@ -1,8 +1,10 @@
 import bpy
 import bmesh
 import importlib
+import json
 import os
 import glob
+import re
 
 if "dataHandling" in locals():
     importlib.reload(dataHandling)
@@ -555,6 +557,65 @@ def _add_texture_to_material(material, texture_path, texture_type):
 
 
 
+def _dump_material_textures(material):
+    """Dump all texture file paths found in a material's node tree."""
+    if not material.use_nodes or not material.node_tree:
+        return
+    
+    texture_info = {}
+    for node in material.node_tree.nodes:
+        if node.type == 'TEX_IMAGE' and node.image:
+            image = node.image
+            texture_info[node.name] = {
+                'label': node.label,
+                'filepath': image.filepath,
+                'filepath_raw': image.filepath_raw if hasattr(image, 'filepath_raw') else None,
+                'name': image.name,
+                'size': image.size if hasattr(image, 'size') else None,
+            }
+    
+    if texture_info:
+        print(f"  Textures in node tree:")
+        for node_name, info in texture_info.items():
+            print(f"    - {node_name} ({info['label']}): {info['filepath']}")
+    else:
+        print(f"  No texture nodes found in node tree")
+
+
+def _get_material_texture_paths(material):
+    """Return unique texture filepaths from image texture nodes."""
+    if not material.use_nodes or not material.node_tree:
+        return []
+
+    texture_paths = []
+    seen = set()
+    for node in material.node_tree.nodes:
+        if node.type != 'TEX_IMAGE' or not node.image:
+            continue
+        filepath = bpy.path.abspath(node.image.filepath)
+        if filepath and filepath not in seen:
+            seen.add(filepath)
+            texture_paths.append(filepath)
+    return texture_paths
+
+
+def _derive_texture_pattern_from_material(material):
+    """Derive a glob pattern from an existing texture filename in the material."""
+    texture_paths = _get_material_texture_paths(material)
+    if not texture_paths:
+        return None
+
+    stem = os.path.splitext(os.path.basename(texture_paths[0]))[0]
+    stem = re.sub(r"_Base_TR$", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"_(TR\d*|D\d*|B\d*|N\d*|NM\d*|R\d*|M\d*|S\d*|SP\d*|SPEC\d*)$", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"_[0-9]+[A-Za-z]*$", "", stem)
+    stem = stem.rstrip("_-")
+    if not stem:
+        return None
+
+    return f"{stem}*"
+
+
 def setup_daz_materials(search_base_path):
     """
     Assign textures to materials using pattern-based matching from the mapping.
@@ -565,22 +626,43 @@ def setup_daz_materials(search_base_path):
     
     for material in bpy.data.materials:
         print(f"\nProcessing Material: {material.name}")
+        print(f"  use_nodes: {material.use_nodes}")
+        print(f"  use_fake_user: {material.use_fake_user}")
+        if hasattr(material, 'blend_method'):
+            print(f"  blend_method: {material.blend_method}")
+        if hasattr(material, 'shadow_method'):
+            print(f"  shadow_method: {material.shadow_method}")
+        if material.use_nodes and material.node_tree:
+            print(f"  nodes: {len(material.node_tree.nodes)}")
+            print(f"  links: {len(material.node_tree.links)}")
+        _dump_material_textures(material)
+        material_texture_paths = _get_material_texture_paths(material)
         
         if not material.use_nodes:
             print("  ✗ Material does not use nodes, skipping.")
             continue
-        
         # Look up the material in the mapping
         texture_pattern = _MATERIAL_TEXTURE_MAP.get(material.name)
         if not texture_pattern:
-            print(f"  ✗ No texture mapping found for material '{material.name}'")
-            continue
+            texture_pattern = _derive_texture_pattern_from_material(material)
+            if texture_pattern:
+                print(
+                    f"  → No direct material map; using filename-derived pattern: {texture_pattern}"
+                )
+            else:
+                print(f"  ✗ No texture mapping found for material '{material.name}'")
+                continue
         
         print(f"  → Texture pattern: {texture_pattern}")
         
         # Search for color texture (jpg or png) using the pattern
         color_patterns = _resolve_color_map_patterns(texture_pattern)
         color_file = _find_first_texture_by_patterns(search_base_path, color_patterns)
+        if not color_file and material_texture_paths:
+            color_file = material_texture_paths[0]
+            print(
+                f"  → Using existing material texture as color: {os.path.basename(color_file)}"
+            )
         
         if color_file:
             print(f"  ✓ Found color texture: {os.path.basename(color_file)}")
@@ -589,7 +671,9 @@ def setup_daz_materials(search_base_path):
             print(f"  ✗ No color texture found for pattern '{texture_pattern}'")
         
         # Search additional known maps (roughness, metallic, specular, bump).
-        additional_maps = _MATERIAL_ADDITIONAL_MAPS.get(material.name, {})
+        additional_maps = _MATERIAL_ADDITIONAL_MAPS.get(
+            material.name, _MATERIAL_ADDITIONAL_MAPS.get("Material", {})
+        )
         for map_type, map_config in additional_maps.items():
             map_patterns = _resolve_additional_map_patterns(
                 texture_pattern, map_config
