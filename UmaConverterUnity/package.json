@@ -1,13 +1,13 @@
 {
-  "name": "com.vwgamedev.umaconverter",
+  "name": "com.ovstudio.umaconverter",
   "version": "0.1.2",
   "displayName": "UMA Converter",
   "description": "This Plugin provides a Asset Postprocessor to Convert UMA Races and Clothing exported by the Blender UMA Converter Plugin\nImportant: This Plugin is under Active Development, the Code is a Mess and it might break your Project. Use at your own Risk!",
   "unity": "2022.3",
   "unityRelease": "20f1",
-  "documentationUrl": "https://vwgame.dev/",
-  "changelogUrl": "https://vwgame.dev/",
-  "licensesUrl": "https://vwgame.dev/",
+  "documentationUrl": "https://ovstudio-tech.com/",
+  "changelogUrl": "https://ovstudio-tech.com/",
+  "licensesUrl": "https://ovstudio-tech.com/",
   "dependencies": {
     "com.unity.nuget.newtonsoft-json": "3.2.1"
   },
@@ -19,6 +19,6 @@
   "author": {
     "name": "Valentin Winkelmann",
     "email": "info@valentinwinkelmann.com",
-    "url": "https://vwgame.dev/"
+    "url": "https://ovstudio-tech.com/"
   }
 }

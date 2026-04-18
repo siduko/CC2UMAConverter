@@ -267,14 +267,9 @@ class DAZUMA_OT_Export(Operator, ExportHelper):
             dataHandling.save_to_json_file(cloth_data, filename_no_ext + "_cloth.json")
 
         if self.export_textures:
-            selected_objects = [
-                obj
-                for item in context.scene.mesh_items
-                if item.selected
-                for obj in [bpy.data.objects.get(item.name)]
-                if obj is not None
-            ]
-            _save_textures(self.filepath, selected_objects, filename_no_ext, context.scene.rig_type)
+            selected_objects = [bpy.data.objects[item.name] for item in context.scene.mesh_items if item.selected]
+            # Ruft die Funktion zum Speichern der Texturen auf
+            save_textures_with_export(self.filepath, selected_objects, filename_no_ext)
 
         self.report({"INFO"}, "Export successful.")
         return {"FINISHED"}
@@ -285,24 +280,45 @@ class DAZUMA_OT_Export(Operator, ExportHelper):
 
 # ── Texture export helper ────────────────────────────────────────────────────
 
-def _save_textures(filepath, selected_objects, custom_folder_name, rig_type=None):
-    base_dir = os.path.dirname(filepath)
-    texture_dir = os.path.join(base_dir, custom_folder_name, "Textures")
-    os.makedirs(texture_dir, exist_ok=True)
+def _get_export_channel_name(node_name):
+    normalized_name = (node_name or "").strip().lower()
+    channel_map = {
+        "color": "Diffuse",
+        "diffuse": "Diffuse",
+        "metallic": "metallic",
+        "roughness": "roughness",
+        "normal": "Normal",
+        "bump": "Normal",
+    }
+    return channel_map.get(normalized_name)
+
+
+def save_textures_with_export(filepath, selected_objects, custom_folder_name="Exported_Textures"):
+    base_directory = os.path.dirname(filepath)
+    custom_directory = os.path.join(base_directory, custom_folder_name, "Textures")
+    os.makedirs(custom_directory, exist_ok=True)
+    copied_targets = set()
+    
     for obj in selected_objects:
-        if obj.type != "MESH" or not obj.material_slots:
-            continue
-        for slot in obj.material_slots:
-            if not slot.material or not slot.material.use_nodes:
-                continue
-            material_name = slot.material.name
-            for node in slot.material.node_tree.nodes:
-                if node.type == "TEX_IMAGE" and node.image:
-                    src = bpy.path.abspath(node.image.filepath)
-                    if os.path.isfile(src):
-                        suffix = os.path.basename(src).split("_")[-1]
-                        dest_name = f"{material_name}_{suffix}"
-                        shutil.copy(src, os.path.join(texture_dir, dest_name))
+        if obj.type == 'MESH' and obj.material_slots:
+            for slot in obj.material_slots:
+                if slot.material and slot.material.use_nodes:
+                    for node in slot.material.node_tree.nodes:
+                        if node.type == 'TEX_IMAGE' and node.image:
+                            channel_name = _get_export_channel_name(node.name)
+                            if channel_name is None:
+                                continue
+
+                            original_texture_path = bpy.path.abspath(node.image.filepath)
+                            if os.path.isfile(original_texture_path):
+                                _, extension = os.path.splitext(original_texture_path)
+                                new_texture_name = f"{slot.material.name}_{channel_name}{extension}"
+                                target_path = os.path.join(custom_directory, new_texture_name)
+                                if target_path in copied_targets:
+                                    continue
+                                shutil.copy2(original_texture_path, target_path)
+                                copied_targets.add(target_path)
+                                print(f"Texture copied to {target_path}")
 
 
 # ── Register / Unregister ────────────────────────────────────────────────────
