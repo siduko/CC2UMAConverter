@@ -105,6 +105,13 @@ class DAZUMA_PT_Panel(Panel):
                 row.label(text=overlay, icon="MATERIAL")
 
             layout.label(text="Available Meshes:")
+            
+            # Select All checkbox and button
+            row = layout.row(align=True)
+            row.prop(context.scene, "select_all_meshes", text="Select All")
+            row.operator("dazuma.select_all_meshes", text="Apply")
+            
+            # Display mesh items
             for item in context.scene.mesh_items:
                 if race_data is not None and item.name in race_data.meshes:
                     continue
@@ -115,6 +122,24 @@ class DAZUMA_PT_Panel(Panel):
                     row.prop(item, "slot_name", text="Slot Name")
                 if context.scene.rig_type == "clothing" and item.selected:
                     box.prop(item, "wardrobe_slot")
+            
+            # Batch Rename Slots
+            layout.separator()
+            box = layout.box()
+            box.label(text="Batch Rename Slots", icon="SORTALPHA")
+            box.prop(context.scene, "batch_rename_mode", text="Mode")
+            
+            # Show fields based on selected mode
+            if context.scene.batch_rename_mode == 'simple':
+                box.prop(context.scene, "batch_rename_pattern", text="Pattern")
+                box.label(text="Use {mesh} as placeholder", icon="INFO")
+            elif context.scene.batch_rename_mode == 'search_replace':
+                box.prop(context.scene, "batch_search_text", text="Find")
+                box.prop(context.scene, "batch_replace_text", text="Replace")
+            elif context.scene.batch_rename_mode == 'delete':
+                box.prop(context.scene, "batch_search_text", text="Text to Delete")
+            
+            box.operator("dazuma.batch_rename_slots", text="Apply Batch Rename")
 
             layout.operator("dazuma.export", text="Export Selected")
 
@@ -182,6 +207,71 @@ class DAZUMA_OT_Import(Operator, ImportHelper):
         file_dir = os.path.dirname(self.filepath)
         dazconverter.setup_daz_materials(file_dir)
         self.report({"INFO"}, "FBX imported successfully.")
+        return {"FINISHED"}
+
+
+class DAZUMA_OT_SelectAllMeshes(Operator):
+    bl_idname = "dazuma.select_all_meshes"
+    bl_label = "Select All Meshes"
+    
+    def execute(self, context):
+        select_state = context.scene.select_all_meshes
+        for item in context.scene.mesh_items:
+            item.selected = select_state
+        return {"FINISHED"}
+
+
+class DAZUMA_OT_BatchRenameSlots(Operator):
+    bl_idname = "dazuma.batch_rename_slots"
+    bl_label = "Batch Rename Slots"
+    
+    def execute(self, context):
+        rename_mode = context.scene.batch_rename_mode
+        renamed_count = 0
+        
+        for item in context.scene.mesh_items:
+            if item.selected:
+                old_name = item.slot_name
+                
+                if rename_mode == 'simple':
+                    # Simple pattern mode: replace {mesh} placeholder
+                    pattern = context.scene.batch_rename_pattern
+                    new_slot_name = pattern.replace("{mesh}", item.name)
+                    
+                elif rename_mode == 'search_replace':
+                    # Search and replace mode
+                    search_text = context.scene.batch_search_text
+                    replace_text = context.scene.batch_replace_text
+                    
+                    if search_text:
+                        new_slot_name = item.slot_name.replace(search_text, replace_text)
+                    else:
+                        self.report({"WARNING"}, "Search text is empty")
+                        continue
+                        
+                elif rename_mode == 'delete':
+                    # Delete pattern mode: remove text matching search
+                    search_text = context.scene.batch_search_text
+                    
+                    if search_text:
+                        new_slot_name = item.slot_name.replace(search_text, "")
+                    else:
+                        self.report({"WARNING"}, "Search text is empty")
+                        continue
+                else:
+                    continue
+                
+                if new_slot_name != old_name:
+                    item.slot_name = new_slot_name
+                    renamed_count += 1
+        
+        mode_label = {
+            'simple': 'pattern substitution',
+            'search_replace': 'search and replace',
+            'delete': 'deletion'
+        }.get(rename_mode, 'unknown')
+        
+        self.report({"INFO"}, f"Renamed {renamed_count} slot(s) using {mode_label}")
         return {"FINISHED"}
 
 
@@ -329,9 +419,13 @@ def register():
     gui.register_json_file_field()
     gui.register_race_wizard()
     gui.register_mesh_items()
+    gui.register_select_all()
+    gui.register_batch_rename_pattern()
     bpy.utils.register_class(DAZUMA_PT_Panel)
     bpy.utils.register_class(DAZUMA_OT_Convert)
     bpy.utils.register_class(DAZUMA_OT_Import)
+    bpy.utils.register_class(DAZUMA_OT_SelectAllMeshes)
+    bpy.utils.register_class(DAZUMA_OT_BatchRenameSlots)
     bpy.utils.register_class(DAZUMA_OT_Export)
 
 
@@ -341,9 +435,13 @@ def unregister():
     gui.unregister_json_file_field()
     gui.unregister_race_wizard()
     gui.unregister_mesh_items()
+    gui.unregister_select_all()
+    gui.unregister_batch_rename_pattern()
     bpy.utils.unregister_class(DAZUMA_PT_Panel)
     bpy.utils.unregister_class(DAZUMA_OT_Convert)
     bpy.utils.unregister_class(DAZUMA_OT_Import)
+    bpy.utils.unregister_class(DAZUMA_OT_SelectAllMeshes)
+    bpy.utils.unregister_class(DAZUMA_OT_BatchRenameSlots)
     bpy.utils.unregister_class(DAZUMA_OT_Export)
 
 
