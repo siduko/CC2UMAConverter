@@ -1,0 +1,9 @@
+{
+	"servers": {
+		"gitnexus": {
+			"command": "gitnexus",
+			"args": ["mcp"]
+		}
+	},
+	"inputs": []
+}
