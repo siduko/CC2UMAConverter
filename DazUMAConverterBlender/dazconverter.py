@@ -40,28 +40,66 @@ _MATERIAL_TEXTURE_MAP = {
     "Torso": "*_torso_[0-9]*",
 }
 
+_SPECULAR_SUFFIXES = [
+    "S",
+    "SP",
+    "SPEC",
+    "*specular*",
+    "*gloss*",
+    "*glossiness*",
+]
+
+_BUMP_SUFFIXES = [
+    "B",
+    "BM",
+    "BP",
+    "*bump*",
+    "*height*",
+    "*displacement*",
+]
+
+_NORMAL_SUFFIXES = [
+    "N",
+    "NM",
+    "NRM",
+    "NOR",
+    "*normal*",
+]
+
+_ROUGHNESS_SUFFIXES = [
+    "R",
+    "RO",
+    "*roughness*",
+]
+
+_METALLIC_SUFFIXES = [
+    "M",
+    "MT",
+    "*metallic*",
+]
+
 # Optional additional texture maps per material.
 # String values reuse the base texture pattern with the provided suffix token.
 # Dict values can override the base pattern for exceptions like Lips -> lipsS.
 _MATERIAL_ADDITIONAL_MAPS = {
-    "Arms": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": "S", "bump": "B"},
-    "Cornea": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"]},
-    "Ears": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": "S", "bump": "B"},
-    "Eyelashes": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"]},
-    "EyeMoisture": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"]},
-    "EyeSocket": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"]},
-    "Face": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": "S", "bump": "B"},
-    "Fingernails": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": "S", "bump": "B"},
-    "Irises": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"]},
-    "Legs": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": "S", "bump": "B"},
-    "Lips": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": {"base_pattern": "*_lips_[0-9]*", "suffixes": ["S"]}},
-    "Material": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": "S", "bump": "B"},
-    "Mouth": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "bump": "B"},
-    "Pupils": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"]},
-    "Sclera": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"]},
-    "Teeth": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"]},
-    "Toenails": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": "S", "bump": "B"},
-    "Torso": {"roughness": ["R", "RO", "*roughness*"], "metallic": ["M", "MT", "*metallic*"], "specular": "S", "bump": "B"},
+    "Arms": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": _SPECULAR_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Cornea": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES},
+    "Ears": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": _SPECULAR_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Eyelashes": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES},
+    "EyeMoisture": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES},
+    "EyeSocket": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES},
+    "Face": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": _SPECULAR_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Fingernails": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": _SPECULAR_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Irises": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES},
+    "Legs": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": _SPECULAR_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Lips": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": {"base_pattern": "*_lips_[0-9]*", "suffixes": _SPECULAR_SUFFIXES}, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Material": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": _SPECULAR_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Mouth": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Pupils": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES},
+    "Sclera": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES},
+    "Teeth": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES},
+    "Toenails": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": _SPECULAR_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
+    "Torso": {"roughness": _ROUGHNESS_SUFFIXES, "metallic": _METALLIC_SUFFIXES, "specular": _SPECULAR_SUFFIXES, "bump": _BUMP_SUFFIXES, "normal": _NORMAL_SUFFIXES},
 }
 
 DEBUG_DAZCONVERTER = True
@@ -395,9 +433,21 @@ def _find_first_texture_by_patterns(base_path, patterns):
 
 def _build_suffix_patterns(base_pattern, suffixes):
     patterns = []
+    token = "_[0-9]*"
     for suffix in suffixes:
-        patterns.append(base_pattern.replace("_[0-9]*", f"{suffix}_[0-9]*"))
-    return patterns
+        if token in base_pattern:
+            if "*" in suffix:
+                patterns.append(base_pattern.replace(token, suffix))
+            patterns.append(base_pattern.replace(token, f"{suffix}_[0-9]*"))
+        else:
+            patterns.append(base_pattern + suffix)
+    deduped_patterns = []
+    seen = set()
+    for pattern in patterns:
+        if pattern not in seen:
+            deduped_patterns.append(pattern)
+            seen.add(pattern)
+    return deduped_patterns
 
 
 def _resolve_color_map_patterns(base_texture_pattern):

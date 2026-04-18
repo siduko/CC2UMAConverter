@@ -245,19 +245,108 @@ namespace UMAConverter
         public Texture[] GetOverlayTextureList(string overlayName, UMAMaterial umaMaterial)
         {
             List<Texture> textures = new List<Texture>();
+            string[] searchFolders = GetTextureSearchFolders();
+
             foreach (UMAMaterial.MaterialChannel channel in umaMaterial.channels)
             {
-                string textureName = overlayName + "_" + channel.materialPropertyName.Replace("_", "");
-                string[] textureGUIDs = AssetDatabase.FindAssets(textureName);
-                if (textureGUIDs.Length > 0)
+                string channelName = channel.materialPropertyName.Replace("_", "");
+                List<string> candidates = GetTextureCandidatesForChannel(channelName);
+
+                Texture texture = null;
+                foreach (string candidate in candidates)
                 {
-                    string texturePath = AssetDatabase.GUIDToAssetPath(textureGUIDs[0]);
-                    Texture texture = AssetDatabase.LoadAssetAtPath<Texture>(texturePath);
+                    string textureName = overlayName + "_" + candidate;
+                    texture = FindTextureByName(textureName, searchFolders);
+                    if (texture != null)
+                    {
+                        break;
+                    }
+                }
+
+                if (texture != null)
+                {
                     textures.Add(texture);
                 }
             }
             return textures.ToArray();  
         }
+
+        private string[] GetTextureSearchFolders()
+        {
+            List<string> searchFolders = new List<string>();
+            if (!string.IsNullOrEmpty(workingDirectory))
+            {
+                string textureFolder = workingDirectory + "/Textures";
+                if (AssetDatabase.IsValidFolder(textureFolder))
+                {
+                    searchFolders.Add(textureFolder);
+                }
+
+                if (AssetDatabase.IsValidFolder(workingDirectory))
+                {
+                    searchFolders.Add(workingDirectory);
+                }
+            }
+            return searchFolders.ToArray();
+        }
+
+        private Texture FindTextureByName(string textureName, string[] searchFolders)
+        {
+            string[] textureGUIDs = searchFolders.Length > 0
+                ? AssetDatabase.FindAssets(textureName + " t:Texture", searchFolders)
+                : AssetDatabase.FindAssets(textureName + " t:Texture");
+
+            foreach (string guid in textureGUIDs)
+            {
+                string texturePath = AssetDatabase.GUIDToAssetPath(guid);
+                if (string.Equals(Path.GetFileNameWithoutExtension(texturePath), textureName, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return AssetDatabase.LoadAssetAtPath<Texture>(texturePath);
+                }
+            }
+
+            return null;
+        }
+
+        private List<string> GetTextureCandidatesForChannel(string channelName)
+        {
+            List<string> aliases;
+            if (!textureChannelAliases.TryGetValue(channelName, out aliases))
+            {
+                aliases = new List<string>();
+            }
+
+            List<string> candidates = new List<string>();
+            candidates.Add(channelName);
+            foreach (string alias in aliases)
+            {
+                if (!candidates.Contains(alias))
+                {
+                    candidates.Add(alias);
+                }
+            }
+            return candidates;
+        }
+
+        private static readonly Dictionary<string, List<string>> textureChannelAliases = new Dictionary<string, List<string>>()
+        {
+            { "Diffuse", new List<string> { "BaseMap", "MainTex", "Albedo", "Color" } },
+            { "BaseMap", new List<string> { "Diffuse", "MainTex", "Albedo", "Color" } },
+            { "MainTex", new List<string> { "Diffuse", "BaseMap", "Albedo", "Color" } },
+            { "Normal", new List<string> { "BumpMap", "NormalMap" } },
+            { "BumpMap", new List<string> { "Normal", "NormalMap" } },
+            { "metallic", new List<string> { "Metallic", "MetallicGlossMap", "metallic" } },
+            { "Metallic", new List<string> { "metallic", "MetallicGlossMap" } },
+            { "roughness", new List<string> { "Smoothness", "Glossiness", "roughness" } },
+            { "Smoothness", new List<string> { "roughness", "Glossiness" } },
+            { "EmissionMap", new List<string> { "Emission", "Emissive" } },
+            { "OcclusionMap", new List<string> { "Occlusion", "AO", "AmbientOcclusion" } },
+            { "ParallaxMap", new List<string> { "Height", "Displacement" } },
+            { "SpecGlossMap", new List<string> { "Specular", "SpecGloss", "SpecularGloss" } },
+            { "DetailAlbedoMap", new List<string> { "DetailAlbedo", "DetailColor" } },
+            { "DetailNormalMap", new List<string> { "DetailNormal", "DetailBump" } },
+            { "DetailMask", new List<string>() }
+        };
 
 
 

@@ -13,6 +13,7 @@ bl_info = {
 import bpy
 import importlib
 import os
+import re
 import shutil
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 from bpy.types import Operator, Panel
@@ -370,15 +371,57 @@ class DAZUMA_OT_Export(Operator, ExportHelper):
 
 # ── Texture export helper ────────────────────────────────────────────────────
 
+def _normalize_channel_key(channel_name):
+    normalized = (channel_name or "").strip().lower()
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
 def _get_export_channel_name(node_name):
-    normalized_name = (node_name or "").strip().lower()
+    normalized_name = _normalize_channel_key(node_name)
     channel_map = {
+        # Diffuse / Albedo family
         "color": "Diffuse",
+        "basecolor": "Diffuse",
+        "albedo": "Diffuse",
         "diffuse": "Diffuse",
+        "basemap": "Diffuse",
+        "maintex": "Diffuse",
+
+        # Normal family
+        "normalmap": "Normal",
         "metallic": "metallic",
+        "metalness": "metallic",
+
+        # Roughness / Smoothness family
         "roughness": "roughness",
+        "smoothness": "roughness",
+        "glossiness": "roughness",
+
+        # Other common texture channels used in the Unity material
         "normal": "Normal",
         "bump": "Normal",
+        "bumpmap": "BumpMap",
+        "metallicglossmap": "MetallicGlossMap",
+        "detailalbedomap": "DetailAlbedoMap",
+        "detailnormalmap": "DetailNormalMap",
+        "detailmask": "DetailMask",
+        "emission": "EmissionMap",
+        "emissive": "EmissionMap",
+        "emissionmap": "EmissionMap",
+        "occlusion": "OcclusionMap",
+        "ao": "OcclusionMap",
+        "ambientocclusion": "OcclusionMap",
+        "occlusionmap": "OcclusionMap",
+        "parallax": "ParallaxMap",
+        "height": "ParallaxMap",
+        "displacement": "ParallaxMap",
+        "parallaxmap": "ParallaxMap",
+        "specular": "SpecGlossMap",
+        "specgloss": "SpecGlossMap",
+        "speculargloss": "SpecGlossMap",
+        "specglossmap": "SpecGlossMap",
+        "base": "BaseMap",
+        "diffusemap": "Diffuse",
     }
     return channel_map.get(normalized_name)
 
