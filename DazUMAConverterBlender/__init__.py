@@ -389,6 +389,7 @@ def _get_export_channel_name(node_name):
 
         # Normal family
         "normalmap": "Normal",
+        "normal": "Normal",
         "metallic": "metallic",
         "metalness": "metallic",
 
@@ -397,10 +398,17 @@ def _get_export_channel_name(node_name):
         "smoothness": "roughness",
         "glossiness": "roughness",
 
-        # Other common texture channels used in the Unity material
-        "normal": "Normal",
-        "bump": "Normal",
+        # Bump / Height family
+        "bump": "BumpMap",
         "bumpmap": "BumpMap",
+        "bump_converter": "BumpMap",
+
+        # Transparency / Alpha family
+        "transparency": "TransparencyMap",
+        "alpha": "TransparencyMap",
+        "opacity": "TransparencyMap",
+
+        # Other common texture channels used in the Unity material
         "metallicglossmap": "MetallicGlossMap",
         "detailalbedomap": "DetailAlbedoMap",
         "detailnormalmap": "DetailNormalMap",
@@ -451,7 +459,7 @@ def save_textures_with_export(filepath, selected_objects, custom_folder_name="Ex
                                     continue
                                 shutil.copy2(original_texture_path, target_path)
                                 copied_targets.add(target_path)
-                                print(f"Texture copied to {target_path}")
+                                print(f"Texture copied from {original_texture_path} to {target_path}")
 
 
 # ── Register / Unregister ────────────────────────────────────────────────────
