@@ -80,6 +80,16 @@ _METALLIC_SUFFIXES = [
     "*metallic*",
 ]
 
+_TRANSPARENCY_SUFFIXES = [
+    "TR",
+    "*transparency*",
+    "*opacity*",
+    "*alpha*",
+    "*mask*",
+    "*cutout*",
+    "*base_tr*",
+]
+
 # Optional additional texture maps per material.
 # String values reuse the base texture pattern with the provided suffix token.
 # Dict values can override the base pattern for exceptions like Lips -> lipsS.
@@ -427,6 +437,117 @@ def _find_first_texture_by_patterns(base_path, patterns):
     return None
 
 
+def _classify_texture_filename(texture_path):
+    stem = os.path.splitext(os.path.basename(texture_path))[0]
+    lower_stem = stem.lower()
+
+    if lower_stem.endswith("_base_tr") or re.search(
+        r"(?:^|[_-])(tr|alpha|opacity|mask|cutout)\d*$", lower_stem
+    ):
+        return "transparency"
+
+    if re.search(r"(?:^|[_-])(n|nm|nrm|nor|normal)\d*$", lower_stem):
+        return "normal"
+
+    if re.search(r"(?:^|[_-])(r|ro|roughness)\d*$", lower_stem):
+        return "roughness"
+
+    if re.search(r"(?:^|[_-])(m|mt|metallic)\d*$", lower_stem):
+        return "metallic"
+
+    if re.search(r"(?:^|[_-])(sp|spec|specular|s|gloss|glossiness)\d*$", lower_stem):
+        return "specular"
+
+    if re.search(r"(?:^|[_-])(b|bm|bp|bump|height|displacement)\d*$", lower_stem):
+        return "bump"
+
+    if re.search(r"(?:^|[_-])(d|diffuse|albedo|basecolor)\d*$", lower_stem):
+        return "color"
+
+    trailing_variant = re.search(r"_([0-9]+)([a-z]+)?$", lower_stem)
+    if trailing_variant:
+        variant_suffix = trailing_variant.group(2)
+        if not variant_suffix:
+            return "color"
+        suffix_type_map = {
+            "b": "color",  # _01B = set-variant letter, not bump (bump uses separator: _Face_B)
+            "n": "normal",
+            "nm": "normal",
+            "r": "roughness",
+            "m": "metallic",
+            "s": "specular",
+            "sp": "specular",
+            "tr": "transparency",
+            "d": "color",
+        }
+        return suffix_type_map.get(variant_suffix, "unknown")
+
+    return "unknown"
+
+
+def _derive_texture_pattern_from_filename(texture_path):
+    stem = os.path.splitext(os.path.basename(texture_path))[0]
+    lower_stem = stem.lower()
+    has_variant_digits = bool(re.search(r"[0-9]+[a-z]*$", lower_stem))
+
+    stem = re.sub(r"_Base_TR$", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(
+        r"(?:[_-]?)(TR|D|B|BM|BP|N|NM|NRM|NOR|R|RO|M|MT|S|SP|SPEC)\d*$",
+        "",
+        stem,
+        flags=re.IGNORECASE,
+    )
+    stem = re.sub(r"_[0-9]+[A-Za-z]*$", "", stem)
+    stem = stem.rstrip("_-")
+    if not stem:
+        return None
+
+    if has_variant_digits:
+        return f"{stem}_[0-9]*"
+    return f"{stem}*"
+
+
+def _collect_material_textures_by_type(material):
+    typed_textures = {}
+    for texture_path in _get_material_texture_paths(material):
+        texture_type = _classify_texture_filename(texture_path)
+        if texture_type != "unknown" and texture_type not in typed_textures:
+            typed_textures[texture_type] = texture_path
+    return typed_textures
+
+
+def _find_first_texture_for_type(base_path, patterns, texture_type):
+    collected_files = []
+    seen = set()
+    valid_extensions = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
+
+    for pattern in patterns:
+        for file_path in find_textures_custom_path(base_path, pattern):
+            if file_path in seen or not file_path.lower().endswith(valid_extensions):
+                continue
+            seen.add(file_path)
+            collected_files.append(file_path)
+
+    if not collected_files:
+        return None
+
+    expected_types = [texture_type]
+    if texture_type == "color":
+        expected_types.append("unknown")
+
+    for expected in expected_types:
+        for file_path in collected_files:
+            if _classify_texture_filename(file_path) == expected:
+                return file_path
+    return None
+
+
+def _should_add_color_texture_from_directory(textures_in_nodes):
+    if not textures_in_nodes:
+        return True
+    return "color" in textures_in_nodes
+
+
 def _build_suffix_patterns(base_pattern, suffixes):
     patterns = []
     token = "_[0-9]*"
@@ -479,6 +600,7 @@ def _add_texture_to_material(material, texture_path, texture_type):
         "specular": (-800, -400),
         "bump": (-800, -600),
         "normal": (-800, -800),
+        "transparency": (-800, -1000),
     }
 
     def _clear_input_links(input_socket):
@@ -516,7 +638,7 @@ def _add_texture_to_material(material, texture_path, texture_type):
     texture_node.location = texture_locations.get(texture_type, (-800, 0))
 
     # Set colorspace for non-color data
-    if texture_type in ['roughness', 'metallic', 'normal', 'specular', 'bump']:
+    if texture_type in ['roughness', 'metallic', 'normal', 'specular', 'bump', 'transparency']:
         texture_node.image.colorspace_settings.name = 'Non-Color'
     else:
         texture_node.image.colorspace_settings.name = 'sRGB'
@@ -554,6 +676,15 @@ def _add_texture_to_material(material, texture_path, texture_type):
         normal_map_node.location = (-400, -800)
         _link_to_input(texture_node.outputs['Color'], normal_map_node.inputs['Color'])
         _link_to_input(normal_map_node.outputs['Normal'], bsdf.inputs['Normal'])
+    elif texture_type == 'transparency':
+        if 'Alpha' in texture_node.outputs and 'Alpha' in bsdf.inputs:
+            _link_to_input(texture_node.outputs['Alpha'], bsdf.inputs['Alpha'])
+        elif 'Color' in texture_node.outputs and 'Alpha' in bsdf.inputs:
+            _link_to_input(texture_node.outputs['Color'], bsdf.inputs['Alpha'])
+        if hasattr(material, 'blend_method'):
+            material.blend_method = 'BLEND'
+        if hasattr(material, 'shadow_method'):
+            material.shadow_method = 'HASHED'
 
 
 
@@ -605,15 +736,11 @@ def _derive_texture_pattern_from_material(material):
     if not texture_paths:
         return None
 
-    stem = os.path.splitext(os.path.basename(texture_paths[0]))[0]
-    stem = re.sub(r"_Base_TR$", "", stem, flags=re.IGNORECASE)
-    stem = re.sub(r"_(TR\d*|D\d*|B\d*|N\d*|NM\d*|R\d*|M\d*|S\d*|SP\d*|SPEC\d*)$", "", stem, flags=re.IGNORECASE)
-    stem = re.sub(r"_[0-9]+[A-Za-z]*$", "", stem)
-    stem = stem.rstrip("_-")
-    if not stem:
-        return None
-
-    return f"{stem}*"
+    preferred_path = next(
+        (path for path in texture_paths if _classify_texture_filename(path) == "color"),
+        texture_paths[0],
+    )
+    return _derive_texture_pattern_from_filename(preferred_path)
 
 
 def setup_daz_materials(search_base_path):
@@ -637,6 +764,12 @@ def setup_daz_materials(search_base_path):
             print(f"  links: {len(material.node_tree.links)}")
         _dump_material_textures(material)
         material_texture_paths = _get_material_texture_paths(material)
+        textures_in_nodes = _collect_material_textures_by_type(material)
+
+        if textures_in_nodes:
+            print("  → Categorized node textures:")
+            for map_type, file_path in textures_in_nodes.items():
+                print(f"    - {map_type}: {os.path.basename(file_path)}")
         
         if not material.use_nodes:
             print("  ✗ Material does not use nodes, skipping.")
@@ -654,31 +787,58 @@ def setup_daz_materials(search_base_path):
                 continue
         
         print(f"  → Texture pattern: {texture_pattern}")
-        
-        # Search for color texture (jpg or png) using the pattern
-        color_patterns = _resolve_color_map_patterns(texture_pattern)
-        color_file = _find_first_texture_by_patterns(search_base_path, color_patterns)
-        if not color_file and material_texture_paths:
-            color_file = material_texture_paths[0]
+
+        # Keep direct node textures first; only fill missing texture inputs.
+        if "color" in textures_in_nodes:
+            color_file = textures_in_nodes["color"]
             print(
-                f"  → Using existing material texture as color: {os.path.basename(color_file)}"
+                f"  ✓ Using existing color texture from node tree: {os.path.basename(color_file)}"
             )
-        
-        if color_file:
-            print(f"  ✓ Found color texture: {os.path.basename(color_file)}")
             _add_texture_to_material(material, color_file, 'color')
+        elif not _should_add_color_texture_from_directory(textures_in_nodes):
+            print(
+                "  → Skipping color scan because node tree already defines non-color maps."
+            )
         else:
-            print(f"  ✗ No color texture found for pattern '{texture_pattern}'")
-        
-        # Search additional known maps (roughness, metallic, specular, bump).
-        additional_maps = _MATERIAL_ADDITIONAL_MAPS.get(
-            material.name, _MATERIAL_ADDITIONAL_MAPS.get("Material", {})
+            color_patterns = _resolve_color_map_patterns(texture_pattern)
+            color_file = _find_first_texture_for_type(
+                search_base_path, color_patterns, "color"
+            )
+            if not color_file and material_texture_paths:
+                color_file = material_texture_paths[0]
+                print(
+                    f"  → Using existing material texture as color fallback: {os.path.basename(color_file)}"
+                )
+
+            if color_file:
+                print(f"  ✓ Found color texture: {os.path.basename(color_file)}")
+                _add_texture_to_material(material, color_file, 'color')
+            else:
+                print(f"  ✗ No color texture found for pattern '{texture_pattern}'")
+
+        # Search additional known maps (roughness, metallic, specular, bump, transparency).
+        additional_maps = dict(
+            _MATERIAL_ADDITIONAL_MAPS.get(
+                material.name, _MATERIAL_ADDITIONAL_MAPS.get("Material", {})
+            )
         )
+        additional_maps.setdefault("transparency", _TRANSPARENCY_SUFFIXES)
+
         for map_type, map_config in additional_maps.items():
+            if map_type in textures_in_nodes:
+                existing_map_file = textures_in_nodes[map_type]
+                print(
+                    f"  ✓ Using existing {map_type} texture from node tree: {os.path.basename(existing_map_file)}"
+                )
+                _add_texture_to_material(material, existing_map_file, map_type)
+                continue
+
             map_patterns = _resolve_additional_map_patterns(
                 texture_pattern, map_config
             )
-            map_file = _find_first_texture_by_patterns(search_base_path, map_patterns)
+            map_file = _find_first_texture_for_type(
+                search_base_path, map_patterns, map_type
+            )
             if map_file:
                 print(
                     f"  ✓ Found {map_type} texture: {os.path.basename(map_file)}"
