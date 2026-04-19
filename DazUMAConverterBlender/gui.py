@@ -72,8 +72,22 @@ def register_json_file_field():
         description="The file path for the JSON file to store the data in.",
         subtype='FILE_PATH',
     )
+
+
 def unregister_json_file_field():
     del bpy.types.Scene.json_file_path
+
+
+def register_import_options():
+    bpy.types.Scene.import_skip_manual_mapping = bpy.props.BoolProperty(
+        name="Skip Manual Mapping",
+        description="Do not show manual mapping dialog before automatic texture setup",
+        default=False,
+    )
+
+
+def unregister_import_options():
+    del bpy.types.Scene.import_skip_manual_mapping
 
 
 def register_race_wizard():

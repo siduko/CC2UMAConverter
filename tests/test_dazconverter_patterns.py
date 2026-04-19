@@ -108,6 +108,18 @@ class TestDazConverterPatternConfig(unittest.TestCase):
             dazconverter._classify_texture_filename("Character_Face_BM.jpg"),
             "bump",
         )
+        self.assertEqual(
+            dazconverter._classify_texture_filename("s051TopB.jpg"),
+            "bump",
+        )
+        self.assertEqual(
+            dazconverter._classify_texture_filename("s051TopS.jpg"),
+            "specular",
+        )
+        self.assertEqual(
+            dazconverter._classify_texture_filename("s051Top05.jpg"),
+            "color",
+        )
 
     def test_derive_texture_pattern_prefers_indexed_variant(self):
         self.assertEqual(
@@ -117,6 +129,10 @@ class TestDazConverterPatternConfig(unittest.TestCase):
         self.assertEqual(
             dazconverter._derive_texture_pattern_from_filename("SW_Toulouse_TR1.jpg"),
             "SW_Toulouse_[0-9]*",
+        )
+        self.assertEqual(
+            dazconverter._derive_texture_pattern_from_filename("s051Top05.jpg"),
+            "s051Top_[0-9]*",
         )
 
     def test_should_add_color_texture_from_directory(self):
@@ -136,6 +152,59 @@ class TestDazConverterPatternConfig(unittest.TestCase):
                 }
             )
         )
+
+    def test_add_texture_with_manual_fallback_calls_callback_on_failure(self):
+        class MaterialStub:
+            name = "Trim.001"
+
+        calls = []
+
+        def failing_add(*_args):
+            raise RuntimeError("link failure")
+
+        def manual_callback(material, texture_path, texture_type, error_message):
+            calls.append((material.name, texture_path, texture_type, error_message))
+            return True
+
+        result = dazconverter._add_texture_with_manual_fallback(
+            MaterialStub(),
+            "/tmp/s051Shorts05.jpg",
+            "color",
+            skip_manual_mapping=False,
+            manual_mapping_callback=manual_callback,
+            add_texture_func=failing_add,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "Trim.001")
+        self.assertEqual(calls[0][2], "color")
+        self.assertIn("link failure", calls[0][3])
+
+    def test_add_texture_with_manual_fallback_skips_when_configured(self):
+        class MaterialStub:
+            name = "Trim.001"
+
+        callback_called = {"value": False}
+
+        def failing_add(*_args):
+            raise RuntimeError("link failure")
+
+        def manual_callback(*_args):
+            callback_called["value"] = True
+            return True
+
+        result = dazconverter._add_texture_with_manual_fallback(
+            MaterialStub(),
+            "/tmp/s051Shorts05.jpg",
+            "color",
+            skip_manual_mapping=True,
+            manual_mapping_callback=manual_callback,
+            add_texture_func=failing_add,
+        )
+
+        self.assertFalse(result)
+        self.assertFalse(callback_called["value"])
 
 
 if __name__ == "__main__":
