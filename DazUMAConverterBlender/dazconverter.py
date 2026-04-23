@@ -115,6 +115,7 @@ _MATERIAL_ADDITIONAL_MAPS = {
 }
 
 DEBUG_DAZCONVERTER = True
+_VALID_TEXTURE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
 
 
 def _debug_log(message):
@@ -420,23 +421,6 @@ def find_textures_custom_path(base_path, search_pattern):
     return sorted(files)
 
 
-def _pick_first_texture_file(files):
-    valid_extensions = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
-    for file_path in files:
-        if file_path.lower().endswith(valid_extensions):
-            return file_path
-    return None
-
-
-def _find_first_texture_by_patterns(base_path, patterns):
-    for pattern in patterns:
-        found = find_textures_custom_path(base_path, pattern)
-        chosen = _pick_first_texture_file(found)
-        if chosen:
-            return chosen
-    return None
-
-
 def _classify_texture_filename(texture_path):
     stem = os.path.splitext(os.path.basename(texture_path))[0]
     lower_stem = stem.lower()
@@ -511,28 +495,79 @@ def _classify_texture_filename(texture_path):
     return "unknown"
 
 
-def _derive_texture_pattern_from_filename(texture_path):
+def _derive_texture_family_from_filename(texture_path):
+    texture_type = _classify_texture_filename(texture_path)
     stem = os.path.splitext(os.path.basename(texture_path))[0]
-    lower_stem = stem.lower()
-    has_variant_digits = bool(re.search(r"[0-9]+[a-z]*$", lower_stem))
-
     stem = re.sub(r"_Base_TR$", "", stem, flags=re.IGNORECASE)
     stem = re.sub(
-        r"(?:[_-]?)(TR|D|B|BM|BP|N|NM|NRM|NOR|R|RO|M|MT|S|SP|SPEC)\d*$",
+        r"(?:[_-])(TR|D|B|BM|BP|N|NM|NRM|NOR|R|RO|M|MT|S|SP|SPEC)\d*$",
         "",
         stem,
         flags=re.IGNORECASE,
     )
     stem = re.sub(r"_[0-9]+[A-Za-z]*$", "", stem)
     stem = re.sub(r"([A-Za-z])[0-9]+$", r"\1", stem)
-    stem = re.sub(r"(TR|SP|SPEC|BM|BP|NM|NRM|NOR|RO|MT|B|N|R|M|S)$", "", stem, flags=re.IGNORECASE)
+    if texture_type in {"transparency", "normal", "roughness", "metallic", "specular", "bump"}:
+        stem = re.sub(r"(TR|SP|SPEC|BM|BP|NM|NRM|NOR|RO|MT|B|N|R|M|S)$", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"[0-9]+$", "", stem)
     stem = stem.rstrip("_-")
-    if not stem:
+    return stem or None
+
+
+def _derive_texture_pattern_from_filename(texture_path):
+    family = _derive_texture_family_from_filename(texture_path)
+    if not family:
         return None
 
+    stem = os.path.splitext(os.path.basename(texture_path))[0]
+    lower_stem = stem.lower()
+    has_variant_digits = bool(re.search(r"[0-9]+[a-z]*$", lower_stem))
+
     if has_variant_digits:
-        return f"{stem}_[0-9]*"
-    return f"{stem}*"
+        return f"{family}_[0-9]*"
+    return f"{family}*"
+
+
+def _index_textures_by_family(base_path):
+    indexed_textures = {}
+
+    for root, _dirs, files in os.walk(base_path):
+        for filename in files:
+            texture_path = os.path.join(root, filename)
+            if not texture_path.lower().endswith(_VALID_TEXTURE_EXTENSIONS):
+                continue
+
+            family = _derive_texture_family_from_filename(texture_path)
+            if not family:
+                continue
+
+            texture_type = _classify_texture_filename(texture_path)
+            family_entry = indexed_textures.setdefault(family.lower(), {})
+            if texture_type not in family_entry:
+                family_entry[texture_type] = texture_path
+
+    return indexed_textures
+
+
+def _resolve_texture_family(material, textures_in_nodes, texture_pattern):
+    prioritized_paths = []
+    if "color" in textures_in_nodes:
+        prioritized_paths.append(textures_in_nodes["color"])
+    prioritized_paths.extend(textures_in_nodes.values())
+
+    for texture_path in prioritized_paths:
+        family = _derive_texture_family_from_filename(texture_path)
+        if family:
+            return family
+
+    if not texture_pattern:
+        return None
+
+    pattern_family = texture_pattern
+    pattern_family = re.sub(r"\[[^\]]*\]", "", pattern_family)
+    pattern_family = pattern_family.replace("*", "")
+    pattern_family = pattern_family.rstrip("_-")
+    return pattern_family or None
 
 
 def _collect_material_textures_by_type(material):
@@ -547,11 +582,10 @@ def _collect_material_textures_by_type(material):
 def _find_first_texture_for_type(base_path, patterns, texture_type):
     collected_files = []
     seen = set()
-    valid_extensions = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
 
     for pattern in patterns:
         for file_path in find_textures_custom_path(base_path, pattern):
-            if file_path in seen or not file_path.lower().endswith(valid_extensions):
+            if file_path in seen or not file_path.lower().endswith(_VALID_TEXTURE_EXTENSIONS):
                 continue
             seen.add(file_path)
             collected_files.append(file_path)
@@ -840,6 +874,7 @@ def setup_daz_materials(
     Searches for color, roughness, metallic, specular, and bump textures.
     """
     _debug_log(f"setup_daz_materials called with search_base_path={search_base_path}")
+    indexed_textures = _index_textures_by_family(search_base_path)
     
     for material in bpy.data.materials:
         print(f"\nProcessing Material: {material.name}")
@@ -878,20 +913,38 @@ def setup_daz_materials(
         
         print(f"  → Texture pattern: {texture_pattern}")
 
-        # Keep direct node textures first; only fill missing texture inputs.
-        if "color" in textures_in_nodes:
-            color_file = textures_in_nodes["color"]
+        for map_type, existing_map_file in textures_in_nodes.items():
             print(
-                f"  ✓ Using existing color texture from node tree: {os.path.basename(color_file)}"
+                f"  ✓ Using existing {map_type} texture from node tree: {os.path.basename(existing_map_file)}"
             )
             _add_texture_with_manual_fallback(
                 material,
-                color_file,
-                'color',
+                existing_map_file,
+                map_type,
                 skip_manual_mapping=skip_manual_mapping,
                 manual_mapping_callback=manual_mapping_callback,
             )
+
+        texture_family = _resolve_texture_family(material, textures_in_nodes, texture_pattern)
+        family_textures = indexed_textures.get(texture_family.lower(), {}) if texture_family else {}
+        if texture_family:
+            print(f"  → Texture family: {texture_family}")
+
+        # Keep direct node textures first; only fill missing texture inputs.
+        if "color" in textures_in_nodes:
+            color_file = textures_in_nodes["color"]
+        elif "color" in family_textures:
+            color_file = family_textures["color"]
+            print(
+                f"  ✓ Found related color texture from folder index: {os.path.basename(color_file)}"
+            )
+        elif "unknown" in family_textures:
+            color_file = family_textures["unknown"]
+            print(
+                f"  → Using related folder texture as color fallback: {os.path.basename(color_file)}"
+            )
         elif not _should_add_color_texture_from_directory(textures_in_nodes):
+            color_file = None
             print(
                 "  → Skipping color scan because node tree already defines non-color maps."
             )
@@ -928,13 +981,16 @@ def setup_daz_materials(
 
         for map_type, map_config in additional_maps.items():
             if map_type in textures_in_nodes:
-                existing_map_file = textures_in_nodes[map_type]
+                continue
+
+            if map_type in family_textures:
+                map_file = family_textures[map_type]
                 print(
-                    f"  ✓ Using existing {map_type} texture from node tree: {os.path.basename(existing_map_file)}"
+                    f"  ✓ Found related {map_type} texture from folder index: {os.path.basename(map_file)}"
                 )
                 _add_texture_with_manual_fallback(
                     material,
-                    existing_map_file,
+                    map_file,
                     map_type,
                     skip_manual_mapping=skip_manual_mapping,
                     manual_mapping_callback=manual_mapping_callback,

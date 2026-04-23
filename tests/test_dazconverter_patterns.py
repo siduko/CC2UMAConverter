@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 import importlib.util
+from unittest import mock
 
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -36,6 +37,24 @@ spec.loader.exec_module(dazconverter)
 
 
 class TestDazConverterPatternConfig(unittest.TestCase):
+    def test_derive_texture_family_handles_index_and_compact_suffixes(self):
+        self.assertEqual(
+            dazconverter._derive_texture_family_from_filename("SW_Toulouse_01.jpg"),
+            "SW_Toulouse",
+        )
+        self.assertEqual(
+            dazconverter._derive_texture_family_from_filename("s051Shorts05.jpg"),
+            "s051Shorts",
+        )
+        self.assertEqual(
+            dazconverter._derive_texture_family_from_filename("s051ShortsB.jpg"),
+            "s051Shorts",
+        )
+        self.assertEqual(
+            dazconverter._derive_texture_family_from_filename("s051ShortsS.jpg"),
+            "s051Shorts",
+        )
+
     def test_color_patterns_include_diffuse_suffix(self):
         color_patterns = dazconverter._resolve_color_map_patterns(
             dazconverter._MATERIAL_TEXTURE_MAP["Eyelashes"]
@@ -143,6 +162,36 @@ class TestDazConverterPatternConfig(unittest.TestCase):
             dazconverter._should_add_color_texture_from_directory(
                 {"color": "/tmp/SW_Toulouse_01.jpg"}
             )
+        )
+
+    def test_index_textures_by_family_groups_related_maps(self):
+        with mock.patch.object(dazconverter.os, "walk") as mock_walk:
+            mock_walk.return_value = [
+                (
+                    "/tmp",
+                    [],
+                    [
+                        "s051Shorts05.jpg",
+                        "s051ShortsB.jpg",
+                        "s051ShortsS.jpg",
+                        "notes.txt",
+                    ],
+                )
+            ]
+
+            indexed = dazconverter._index_textures_by_family("/tmp")
+
+        self.assertEqual(
+            indexed["s051shorts"]["color"],
+            os.path.join("/tmp", "s051Shorts05.jpg"),
+        )
+        self.assertEqual(
+            indexed["s051shorts"]["bump"],
+            os.path.join("/tmp", "s051ShortsB.jpg"),
+        )
+        self.assertEqual(
+            indexed["s051shorts"]["specular"],
+            os.path.join("/tmp", "s051ShortsS.jpg"),
         )
         self.assertFalse(
             dazconverter._should_add_color_texture_from_directory(
