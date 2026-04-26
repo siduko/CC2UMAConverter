@@ -26,17 +26,45 @@ namespace UMAConverter.Editor.Transparency
 
         public static bool IsTransparencyAlias(string candidate)
         {
-            throw new NotImplementedException();
+            foreach (var alias in TransparencyAliases)
+            {
+                if (alias == candidate)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         public static IReadOnlyList<string> GetAliasesForChannel(string channelName)
         {
-            throw new NotImplementedException();
+            if (channelName == "TransparencyMap")
+            {
+                return new[] { "TransparencyMap", "Opacity", "Alpha", "OpacityMask" };
+            }
+            if (channelName == "SpecGlossMap")
+            {
+                return new[] { "SpecGlossMap", "Specular", "SpecGloss", "SpecularGloss" };
+            }
+            return new string[0];
         }
 
         public static bool ShouldUseTransparentRendering(string overlayName, bool hasTransparencyTexture)
         {
-            throw new NotImplementedException();
+            if (!hasTransparencyTexture)
+            {
+                return false;
+            }
+
+            var lowerOverlayName = overlayName.ToLower();
+            foreach (var keyword in TransparentOverlayKeywords)
+            {
+                if (lowerOverlayName.Contains(keyword))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }
