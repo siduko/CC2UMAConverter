@@ -7,6 +7,7 @@ using UMA;
 using UMA.Editors;
 using UMA.CharacterSystem;
 using UMAConverter;
+using UMAConverter.Editor.Transparency;
 
 namespace UMAConverter
 {
@@ -27,6 +28,8 @@ namespace UMAConverter
         GameObject model = null; // The imported model, we are taking our meshes from.
 
         private bool addToGlobalLibrary = true; // If true, the created assets will be added to the global library.
+
+        private Dictionary<string, bool> overlayTransparencyMap = new Dictionary<string, bool>();
 
         /// <summary>
         /// Initializes a new instance of the <see cref="T:UMAConverter"/> class.
@@ -352,11 +355,20 @@ namespace UMAConverter
                 asset.overlayName = overlayName;
             }
 
-            asset.material = slotAsset.material;
-
             string textureOverlayName = !string.IsNullOrEmpty(overlayName) ? overlayName : slotName;
+            
+            // Get textures first to populate transparency map
             Texture[] slotMaterialTextures = GetOverlayTextureList(textureOverlayName, slotAsset.material);
             Texture[] defaultMaterialTextures = GetOverlayTextureList(textureOverlayName, UMAConverterSettings.Instance.defaultMaterial);
+            
+            // Determine which material to use based on transparency policy
+            UMAMaterial materialToUse = UMAConverterSettings.Instance.defaultMaterial;
+            if (TransparencyOverlayPolicy.ShouldUseTransparentRendering(textureOverlayName, HasTransparencyTexture(textureOverlayName)))
+            {
+                materialToUse = UMAConverterSettings.Instance.TransparentMaterial;
+            }
+            
+            asset.material = materialToUse;
 
             bool hasSlotTextures = false;
             foreach (Texture texture in slotMaterialTextures)
@@ -428,6 +440,18 @@ namespace UMAConverter
             }
 
             Debug.Log("[UMAConverter] GetOverlayTextureList end: resolvedTextures=" + resolvedTextureCount + ", returnedSlots=" + textures.Count);
+            
+            // Track if this overlay has a transparency texture
+            Texture2D transparencyTexture = GetTextureCandidateForSlot("TransparencyMap", overlayName, umaMaterial, searchFolders);
+            if (transparencyTexture != null)
+            {
+                overlayTransparencyMap[overlayName] = true;
+            }
+            else
+            {
+                overlayTransparencyMap[overlayName] = false;
+            }
+            
             return textures.ToArray();  
         }
 
@@ -448,6 +472,21 @@ namespace UMAConverter
                 }
             }
             return searchFolders.ToArray();
+        }
+
+        private Texture2D GetTextureCandidateForSlot(string channelName, string overlayName, UMAMaterial umaMaterial, string[] searchFolders)
+        {
+            List<string> candidates = GetTextureCandidatesForChannel(channelName);
+            foreach (string candidate in candidates)
+            {
+                string textureName = overlayName + "_" + candidate;
+                Texture texture = FindTextureByName(textureName, searchFolders);
+                if (texture != null)
+                {
+                    return texture as Texture2D;
+                }
+            }
+            return null;
         }
 
         private Texture FindTextureByName(string textureName, string[] searchFolders)
@@ -523,6 +562,15 @@ namespace UMAConverter
             return candidates;
         }
 
+        private bool HasTransparencyTexture(string overlayName)
+        {
+            if (overlayTransparencyMap.TryGetValue(overlayName, out var hasTransparency))
+            {
+                return hasTransparency;
+            }
+            return false;
+        }
+
         private static readonly Dictionary<string, List<string>> textureChannelAliases = new Dictionary<string, List<string>>()
         {
             { "Diffuse", new List<string> { "BaseMap", "MainTex", "Albedo", "Color" } },
@@ -540,7 +588,8 @@ namespace UMAConverter
             { "SpecGlossMap", new List<string> { "Specular", "SpecGloss", "SpecularGloss" } },
             { "DetailAlbedoMap", new List<string> { "DetailAlbedo", "DetailColor" } },
             { "DetailNormalMap", new List<string> { "DetailNormal", "DetailBump" } },
-            { "DetailMask", new List<string>() }
+            { "DetailMask", new List<string>() },
+            { "TransparencyMap", new List<string> { "TransparencyMap", "Opacity", "Alpha", "OpacityMask" } }
         };
 
 

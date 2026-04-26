@@ -10,6 +10,8 @@ namespace UMAConverter
 
         public bool addToGlobalLibrary = true;
         public UMAMaterial defaultMaterial = null;
+        [SerializeField]
+        private UMAMaterial transparentMaterial;
         public bool removeMeshAfterCreating = false;
 
 #if UMAConverterGCInventory
@@ -38,6 +40,20 @@ namespace UMAConverter
                     instance = FindOrCreateInstance();
                 }
                 return instance;
+            }
+        }
+
+        public UMAMaterial TransparentMaterial
+        {
+            get
+            {
+                if (transparentMaterial == null)
+                {
+                    // Try to load from default location
+                    transparentMaterial = AssetDatabase.LoadAssetAtPath<UMAMaterial>(
+                        "Assets/Runtime/UMAMaterials/CCTransparentMaterial.asset");
+                }
+                return transparentMaterial;
             }
         }
 
