@@ -713,7 +713,7 @@ namespace UMAConverter
             ModelImporter modelImporter = AssetImporter.GetAtPath(meshPath) as ModelImporter;
             if(modelImporter != null)
             {
-                var asset = UmaTPose.CreateInstance<UMA.UmaTPose>();
+                var asset = ScriptableObject.CreateInstance<UMA.UmaTPose>();
                 asset.ReadFromHumanDescription(modelImporter.humanDescription);
                 AssetDatabase.CreateAsset(asset, TPosePath);
                 return asset;
