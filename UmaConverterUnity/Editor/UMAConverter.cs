@@ -108,33 +108,36 @@ namespace UMAConverter
 
         /// <summary>
         /// This method generates the SlotDataAsset for the given slot.
-        /// It will automatically generate the OverlayDataAsset and keep track 
+        /// For multi-material meshes, it creates separate slot+overlay+wardrobe combos for each material.
         /// </summary>
         /// <param name="slot"></param>
-        /// <returns></returns>
+        /// <returns>Primary slot asset, or first generated asset if multi-material</returns>
         public SlotDataAsset GenerateSlotAsset(UMAData_Slot slot)
         {
 
-            // ----------------- Slot -----------------
-            string slotFolder = workingDirectory + "/Slots"; // General Slot folder, not the folder for the specific slot
-            string assetFolder = ""; // Acording to reverse engineering it is empty
-            string assetName = slot.name; // The Name of the Slot
-            string slotName = slot.name; // The Name of the Slot
-            bool nameByMaterial = false; // We are not using the material name as the asset name
-            SkinnedMeshRenderer slotMesh = model.transform.Find(slot.mesh).GetComponent<SkinnedMeshRenderer>(); // The skinned mesh renderer for the slot
-            UMAMaterial material = UMAConverterSettings.Instance.defaultMaterial; // TODO: Implement a way to decide which UMAMaterial should be used as default
-            SkinnedMeshRenderer seamsMesh = null; //TODO: Implement a way that our Blender Plugin exports a seams mesh and tag it in the json, if a slot has seams
-            List<string> keepBoneNames = new List<string>(); // The bones which should be kept, we are not using this feature
-            string rootBone = "Global"; // Its by default "Global" and there is currently no need to change it
-            bool binarySerialization = false; // We are not using binary serialization
-            bool calcTangents = true; // We are calculating tangents by default
-            string stripBones = ""; // We are not stripping bones
+            Debug.Log("[UMAConverter] GenerateSlotAsset start: slot='" + slot.name + "', meshPath='" + slot.mesh + "', primaryOverlay='" + slot.overlay + "', wardrobeSlot='" + slot.wardrobeSlot + "'.");
 
-            if (slotMesh != null && slotMesh.sharedMaterials != null && slotMesh.sharedMaterials.Length > 1)
+            // Get the mesh renderer
+            Transform slotTransform = model != null ? model.transform.Find(slot.mesh) : null;
+            SkinnedMeshRenderer slotMesh = slotTransform != null ? slotTransform.GetComponent<SkinnedMeshRenderer>() : null;
+
+            if (slotTransform == null)
             {
-                Debug.LogWarning("[UMAConverter] Slot '" + slot.name + "' uses " + slotMesh.sharedMaterials.Length + " source materials but only one overlay is currently exported ('" + slot.overlay + "'). This can cause wrong overlays (for example teeth textures on body).");
+                Debug.LogWarning("[UMAConverter] Slot '" + slot.name + "' mesh transform was not found for path '" + slot.mesh + "'.");
+                return null;
+            }
+            else if (slotMesh == null)
+            {
+                Debug.LogWarning("[UMAConverter] Slot '" + slot.name + "' transform '" + slotTransform.name + "' has no SkinnedMeshRenderer.");
+                return null;
+            }
+            else
+            {
+                string sharedMeshName = slotMesh.sharedMesh != null ? slotMesh.sharedMesh.name : "<null>";
+                Debug.Log("[UMAConverter] Slot '" + slot.name + "' mesh resolved: renderer='" + slotMesh.name + "', sharedMesh='" + sharedMeshName + "'.");
             }
 
+            // Log mesh and material information
             List<string> sourceMaterialNames = new List<string>();
             if (slotMesh != null && slotMesh.sharedMaterials != null)
             {
@@ -157,7 +160,38 @@ namespace UMAConverter
                 Debug.Log("[UMAConverter] Slot '" + slot.name + "' mesh stats: mesh='" + slotMesh.sharedMesh.name + "', vertices=" + slotMesh.sharedMesh.vertexCount + ", subMeshes=" + slotMesh.sharedMesh.subMeshCount + ", triangles=" + totalTriangles + ".");
             }
 
+            // Check if this is a multi-material mesh
+            bool isMultiMaterial = slotMesh != null && slotMesh.sharedMaterials != null && slotMesh.sharedMaterials.Length > 1;
             
+            if (isMultiMaterial)
+            {
+                Debug.Log("[UMAConverter] MULTI-MATERIAL SLOT DETECTED: slot='" + slot.name + "' has " + slotMesh.sharedMaterials.Length + " materials. Creating separate slot+overlay+wardrobe for each material.");
+                return GenerateMultiMaterialSlots(slot, slotMesh, sourceMaterialNames);
+            }
+            else
+            {
+                return GenerateSingleMaterialSlot(slot, slotMesh);
+            }
+        }
+
+        /// <summary>
+        /// Generates slots for a single-material mesh (original behavior)
+        /// </summary>
+        private SlotDataAsset GenerateSingleMaterialSlot(UMAData_Slot slot, SkinnedMeshRenderer slotMesh)
+        {
+            string slotFolder = workingDirectory + "/Slots";
+            string assetFolder = "";
+            string assetName = slot.name;
+            string slotName = slot.name;
+            bool nameByMaterial = false;
+            UMAMaterial material = UMAConverterSettings.Instance.defaultMaterial;
+            SkinnedMeshRenderer seamsMesh = null;
+            List<string> keepBoneNames = new List<string>();
+            string rootBone = "Global";
+            bool binarySerialization = false;
+            bool calcTangents = true;
+            string stripBones = "";
+
             SlotBuilderParameters slotBuilderParameters = new SlotBuilderParameters();
             slotBuilderParameters.slotFolder = slotFolder;
             slotBuilderParameters.assetFolder = assetFolder;
@@ -172,10 +206,12 @@ namespace UMAConverter
             slotBuilderParameters.binarySerialization = binarySerialization;
             slotBuilderParameters.calculateTangents = calcTangents;
             slotBuilderParameters.stripBones = stripBones;
-            //public static SlotDataAsset CreateSlotData(string slotFolder, string assetFolder, string assetName, string slotName, bool nameByMaterial, SkinnedMeshRenderer slotMesh, UMAMaterial material, SkinnedMeshRenderer seamsMesh, List<string> KeepList, string rootBone, bool binarySerialization = false, bool calcTangents = true, string stripBones = "", bool useRootFolder = false, bool adustForUDIM)
+
             SlotDataAsset slotAsset = UMASlotProcessingUtil.CreateSlotData(slotBuilderParameters);
 
-            slotAsset.tags = new string[0]; // Currently we are not using tags
+            Debug.Log("[UMAConverter] Slot asset created: slot='" + slot.name + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "', path='" + GetAssetPathSafe(slotAsset) + "', linkedMesh='" + (slotMesh != null ? slotMesh.name : "<null>") + "'.");
+
+            slotAsset.tags = new string[0];
             UMAUpdateProcessor.UpdateSlot(slotAsset);
 
             if (addToGlobalLibrary)
@@ -183,8 +219,7 @@ namespace UMAConverter
                 UMAAssetIndexer.Instance.EvilAddAsset(typeof(SlotDataAsset), slotAsset);
             }
 
-            // ----------------- Overlay -----------------
-
+            // Create overlay
             OverlayDataAsset overlayAsset = null;
             List<OverlayDataAsset> overlaysForSlot = new List<OverlayDataAsset>();
 
@@ -194,44 +229,20 @@ namespace UMAConverter
                 if (overlayAsset != null)
                 {
                     overlaysForSlot.Add(overlayAsset);
+                    Debug.Log("[UMAConverter] Primary overlay linked: slot='" + slot.name + "', slotAsset='" + slotAsset.name + "', overlay='" + overlayAsset.overlayName + "', path='" + GetAssetPathSafe(overlayAsset) + "'.");
                 }
-            } else
+            }
+            else
             {
                 Debug.Log("No overlay found for slot " + slot.name);
             }
-
-            if (slotMesh != null && slotMesh.sharedMaterials != null && slotMesh.sharedMaterials.Length > 1)
-            {
-                List<string> additionalOverlayNames = GetAdditionalOverlayNames(slot.overlay, slotMesh);
-                foreach (string additionalOverlayName in additionalOverlayNames)
-                {
-                    OverlayDataAsset additionalOverlay = GetOrCreateOverlayAsset(slot, slotAsset, slotName, additionalOverlayName, false);
-                    if (additionalOverlay != null && !overlaysForSlot.Contains(additionalOverlay))
-                    {
-                        overlaysForSlot.Add(additionalOverlay);
-                    }
-                }
-
-            }
-
-            List<string> resolvedOverlayNames = new List<string>();
-            foreach (OverlayDataAsset resolvedOverlay in overlaysForSlot)
-            {
-                if (resolvedOverlay != null)
-                {
-                    resolvedOverlayNames.Add(resolvedOverlay.overlayName);
-                }
-            }
-
-            Debug.Log("[UMAConverter] Slot '" + slot.name + "' resolved overlays: count=" + resolvedOverlayNames.Count + ", names=[" + string.Join(",", resolvedOverlayNames) + "].");
 
             if (overlayAsset == null && overlaysForSlot.Count > 0)
             {
                 overlayAsset = overlaysForSlot[0];
             }
 
-            // ----------------- Wardrobe Recipe -----------------
-            // This is only needed for cloth. Every Cloth slot has a Wardrobe Recipe
+            // Create wardrobe recipe for cloth
             if (this.data.type == UMADataType.cloth)
             {
                 string recipePath = workingDirectory + "/Wardrobe/" + slot.name + "_Recipe";
@@ -243,22 +254,206 @@ namespace UMAConverter
                 }
                 #endif
             }
+
             if (slotAsset == null)
-            {
-                Debug.LogWarning("That should not happen.");
-            }
-            if(overlayAsset == null)
             {
                 Debug.LogWarning("That should not happen.");
             }
 
             raceSlots.Add(new UMAData_RaceSlots(slotAsset, overlaysForSlot));
 
+            List<string> linkedOverlayPairs = new List<string>();
+            foreach (OverlayDataAsset linkedOverlay in overlaysForSlot)
+            {
+                if (linkedOverlay != null)
+                {
+                    linkedOverlayPairs.Add(linkedOverlay.overlayName + "@" + GetAssetPathSafe(linkedOverlay));
+                }
+            }
 
-
+            Debug.Log("[UMAConverter] GenerateSlotAsset end (single-material): slot='" + slot.name + "', mesh='" + (slotMesh != null ? slotMesh.name : "<null>") + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "@" + GetAssetPathSafe(slotAsset) + "', overlaysLinked=" + linkedOverlayPairs.Count + " => [" + string.Join(",", linkedOverlayPairs) + "].");
 
             return slotAsset;
+        }
 
+        /// <summary>
+        /// For multi-material meshes, creates separate slot+overlay for each material, but combines them into a single layered wardrobe recipe.
+        /// Each material becomes its own independent slot that can be toggled separately in the same wardrobe item.
+        /// </summary>
+        private SlotDataAsset GenerateMultiMaterialSlots(UMAData_Slot slot, SkinnedMeshRenderer slotMesh, List<string> sourceMaterialNames)
+        {
+            SlotDataAsset primarySlotAsset = null;
+            List<string> allMaterialNames = new List<string>();
+            List<SlotDataAsset> layeredSlots = new List<SlotDataAsset>();
+            List<OverlayDataAsset> layeredOverlays = new List<OverlayDataAsset>();
+
+            // Add primary overlay first if specified
+            if (!string.IsNullOrEmpty(slot.overlay))
+            {
+                allMaterialNames.Add(slot.overlay);
+            }
+
+            // Add all material names from the mesh
+            foreach (string materialName in sourceMaterialNames)
+            {
+                if (materialName != "<null>" && !string.Equals(materialName, slot.overlay, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    allMaterialNames.Add(materialName);
+                }
+            }
+
+            // Create separate slot+overlay for each material (collected for layered wardrobe)
+            for (int materialIndex = 0; materialIndex < allMaterialNames.Count; materialIndex++)
+            {
+                string materialName = allMaterialNames[materialIndex];
+                
+                // Create a unique slot name for this material
+                string uniqueSlotName = slot.name + "_" + materialName;
+                string slotFolder = workingDirectory + "/Slots";
+                string assetFolder = "";
+                string assetName = uniqueSlotName;
+                bool nameByMaterial = false;
+                UMAMaterial material = UMAConverterSettings.Instance.defaultMaterial;
+                SkinnedMeshRenderer seamsMesh = null;
+                List<string> keepBoneNames = new List<string>();
+                string rootBone = "Global";
+                bool binarySerialization = false;
+                bool calcTangents = true;
+                string stripBones = "";
+
+                Debug.Log("[UMAConverter] Creating sub-slot for material: originalSlot='" + slot.name + "', material='" + materialName + "', uniqueSlotName='" + uniqueSlotName + "'");
+
+                SlotBuilderParameters slotBuilderParameters = new SlotBuilderParameters();
+                slotBuilderParameters.slotFolder = slotFolder;
+                slotBuilderParameters.assetFolder = assetFolder;
+                slotBuilderParameters.assetName = assetName;
+                slotBuilderParameters.slotName = uniqueSlotName;
+                slotBuilderParameters.nameByMaterial = nameByMaterial;
+                slotBuilderParameters.slotMesh = slotMesh;
+                slotBuilderParameters.material = material;
+                slotBuilderParameters.seamsMesh = seamsMesh;
+                slotBuilderParameters.keepList = keepBoneNames;
+                slotBuilderParameters.rootBone = rootBone;
+                slotBuilderParameters.binarySerialization = binarySerialization;
+                slotBuilderParameters.calculateTangents = calcTangents;
+                slotBuilderParameters.stripBones = stripBones;
+
+                SlotDataAsset subSlotAsset = UMASlotProcessingUtil.CreateSlotData(slotBuilderParameters);
+
+                Debug.Log("[UMAConverter] Sub-slot asset created: originalSlot='" + slot.name + "', material='" + materialName + "', slotAsset='" + (subSlotAsset != null ? subSlotAsset.name : "<null>") + "', path='" + GetAssetPathSafe(subSlotAsset) + "'.");
+
+                if (subSlotAsset != null)
+                {
+                    subSlotAsset.tags = new string[0];
+                    UMAUpdateProcessor.UpdateSlot(subSlotAsset);
+
+                    if (addToGlobalLibrary)
+                    {
+                        UMAAssetIndexer.Instance.EvilAddAsset(typeof(SlotDataAsset), subSlotAsset);
+                    }
+
+                    layeredSlots.Add(subSlotAsset);
+
+                    // Create overlay for this material
+                    OverlayDataAsset overlayAsset = null;
+                    if (!string.IsNullOrEmpty(materialName))
+                    {
+                        overlayAsset = GetOrCreateOverlayAsset(slot, subSlotAsset, uniqueSlotName, materialName, false);
+                        if (overlayAsset != null)
+                        {
+                            Debug.Log("[UMAConverter] Sub-overlay created: originalSlot='" + slot.name + "', material='" + materialName + "', overlay='" + overlayAsset.overlayName + "', path='" + GetAssetPathSafe(overlayAsset) + "'.");
+                            layeredOverlays.Add(overlayAsset);
+                        }
+                    }
+
+                    // Track slots for race (if applicable)
+                    List<OverlayDataAsset> subSlotOverlays = new List<OverlayDataAsset>();
+                    if (overlayAsset != null)
+                    {
+                        subSlotOverlays.Add(overlayAsset);
+                    }
+                    raceSlots.Add(new UMAData_RaceSlots(subSlotAsset, subSlotOverlays));
+
+                    // Keep reference to primary slot asset
+                    if (primarySlotAsset == null)
+                    {
+                        primarySlotAsset = subSlotAsset;
+                    }
+                }
+            }
+
+            // Create single layered wardrobe recipe for cloth
+            if (this.data.type == UMADataType.cloth && layeredSlots.Count > 0)
+            {
+                string recipePath = workingDirectory + "/Wardrobe/" + slot.name + "_Recipe";
+                UMAWardrobeRecipe recipe = CreateLayeredRecipe(recipePath, layeredSlots, layeredOverlays, addToGlobalLibrary, slot.wardrobeSlot);
+                Debug.Log("[UMAConverter] Layered wardrobe recipe created: originalSlot='" + slot.name + "', layeredSlots=" + layeredSlots.Count + ", layeredOverlays=" + layeredOverlays.Count + ", recipePath='" + recipePath + "'");
+                
+                #if UMAConverterGCInventory
+                if (UMAConverterSettings.Instance.CreateItems)
+                {
+                    UMAConverter.integrations.GameCreatorInventory.CreateItem(recipe, workingDirectory + "/Items/", slot.name);
+                }
+                #endif
+            }
+
+            Debug.Log("[UMAConverter] GenerateSlotAsset end (multi-material): slot='" + slot.name + "', totalMaterialSlots=" + allMaterialNames.Count + ", created " + allMaterialNames.Count + " layered slots+overlays in single wardrobe recipe.");
+
+            return primarySlotAsset;
+        }
+
+        /// <summary>
+        /// Creates a wardrobe recipe that layers multiple slots together (for multi-material meshes).
+        /// </summary>
+        private UMAWardrobeRecipe CreateLayeredRecipe(string path, List<SlotDataAsset> slotDataAssets, List<OverlayDataAsset> overlayDataAssets, bool addToGlobalLibrary, string wardrobeSlot)
+        {
+            // Create recipe with first slot/overlay pair as base
+            UMA.CharacterSystem.UMAWardrobeRecipe wardrobeRecipe = null;
+            if (slotDataAssets.Count > 0)
+            {
+                OverlayDataAsset firstOverlay = overlayDataAssets.Count > 0 ? overlayDataAssets[0] : null;
+                wardrobeRecipe = UMAEditorUtilities.CreateRecipe(path + ".asset", slotDataAssets[0], firstOverlay, slotDataAssets[0].name, addToGlobalLibrary);
+                wardrobeRecipe.wardrobeSlot = wardrobeSlot;
+                wardrobeRecipe.compatibleRaces = (this.data as UMAData_Cloth).compatibleRaces;
+
+                // Rebuild the full layered recipe and save it through UMA's Save API.
+                UMAData.UMARecipe layeredRecipe = new UMAData.UMARecipe();
+                layeredRecipe.ClearDna();
+
+                for (int i = 0; i < slotDataAssets.Count; i++)
+                {
+                    SlotData slotData = new SlotData(slotDataAssets[i]);
+                    if (i < overlayDataAssets.Count && overlayDataAssets[i] != null)
+                    {
+                        slotData.AddOverlay(new OverlayData(overlayDataAssets[i]));
+                    }
+                    layeredRecipe.SetSlot(i, slotData);
+                }
+
+                System.Reflection.MethodInfo saveMethod = wardrobeRecipe.GetType().GetMethod(
+                    "Save",
+                    new System.Type[] { typeof(UMAData.UMARecipe), typeof(UMAContextBase) }
+                );
+                if (saveMethod != null)
+                {
+                    saveMethod.Invoke(wardrobeRecipe, new object[] { layeredRecipe, UMAContextBase.Instance });
+                }
+                else
+                {
+                    Debug.LogWarning("[UMAConverter] Could not find Save(UMARecipe, UMAContextBase) on UMAWardrobeRecipe. Layered slots may not be persisted.");
+                }
+
+                EditorUtility.SetDirty(wardrobeRecipe);
+                AssetDatabase.SaveAssetIfDirty(wardrobeRecipe);
+                AssetDatabase.SaveAssets();
+
+                if (addToGlobalLibrary)
+                {
+                    UMAAssetIndexer.Instance.EvilAddAsset(typeof(UMA.CharacterSystem.UMAWardrobeRecipe), wardrobeRecipe);
+                }
+            }
+
+            return wardrobeRecipe;
         }
 
         private OverlayDataAsset GetOrCreateOverlayAsset(UMAData_Slot slot, SlotDataAsset slotAsset, string slotName, string overlayName, bool allowSharedPath)
@@ -274,6 +469,7 @@ namespace UMAConverter
                 : workingDirectory + "/Slots/" + slot.name + "/" + overlayName;
 
             OverlayDataAsset overlayAsset = AssetDatabase.LoadAssetAtPath<OverlayDataAsset>(overlayPath + ".asset");
+            bool overlayAlreadyExists = overlayAsset != null;
             if (overlayAsset == null)
             {
                 overlayAsset = CreateOverlay(overlayPath, slotAsset, slotName, overlayName);
@@ -283,46 +479,20 @@ namespace UMAConverter
                 UpdateOverlay(overlayAsset, overlayPath, slotAsset, slotName, overlayName);
             }
 
+            Debug.Log("[UMAConverter] Overlay " + (overlayAlreadyExists ? "updated" : "created") + ": slot='" + slot.name + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "', overlay='" + overlayName + "', sharedPath=" + useSharedPath + ", path='" + overlayPath + ".asset'.");
+
             return overlayAsset;
         }
 
-        private List<string> GetAdditionalOverlayNames(string primaryOverlayName, SkinnedMeshRenderer slotMesh)
+        private string GetAssetPathSafe(Object asset)
         {
-            List<string> overlayNames = new List<string>();
-            if (slotMesh == null || slotMesh.sharedMaterials == null)
+            if (asset == null)
             {
-                return overlayNames;
+                return "<null>";
             }
 
-            foreach (Material sourceMaterial in slotMesh.sharedMaterials)
-            {
-                if (sourceMaterial == null || string.IsNullOrEmpty(sourceMaterial.name))
-                {
-                    continue;
-                }
-
-                if (string.Equals(sourceMaterial.name, primaryOverlayName, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                bool alreadyAdded = false;
-                foreach (string overlayName in overlayNames)
-                {
-                    if (string.Equals(overlayName, sourceMaterial.name, System.StringComparison.OrdinalIgnoreCase))
-                    {
-                        alreadyAdded = true;
-                        break;
-                    }
-                }
-
-                if (!alreadyAdded)
-                {
-                    overlayNames.Add(sourceMaterial.name);
-                }
-            }
-
-            return overlayNames;
+            string assetPath = AssetDatabase.GetAssetPath(asset);
+            return string.IsNullOrEmpty(assetPath) ? "<no-asset-path>" : assetPath;
         }
 
         public OverlayDataAsset CreateOverlay(string overlayPath, SlotDataAsset slotAsset, string slotName, string overlayName = null)
