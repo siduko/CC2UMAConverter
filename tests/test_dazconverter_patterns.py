@@ -202,6 +202,87 @@ class TestDazConverterPatternConfig(unittest.TestCase):
             )
         )
 
+    def test_index_textures_by_family_groups_compact_suffix_before_number(self):
+        # RyJeane-style naming: {char}_{bodypart}{SUFFIX}_{number}.ext
+        # armsB_1004 → bump map for arms; armsS_1004 → specular map for arms.
+        # All variants must land in one family key with correct map types.
+        with mock.patch.object(dazconverter.os, "walk") as mock_walk:
+            mock_walk.return_value = [
+                (
+                    "/tmp",
+                    [],
+                    [
+                        "RyJeane_arms_1004.jpg",   # base color
+                        "RyJeane_armsB_1004.jpg",  # bump
+                        "RyJeane_armsS_1004.jpg",  # specular
+                    ],
+                )
+            ]
+            indexed = dazconverter._index_textures_by_family("/tmp")
+
+        family = indexed.get("ryjeane_arms") or indexed.get("RyJeane_arms")
+        self.assertIsNotNone(family, f"Expected 'ryjeane_arms' in indexed keys; got: {list(indexed.keys())}")
+        self.assertEqual(len(indexed), 1, f"Expected 1 family key; got {list(indexed.keys())}")
+        self.assertIn("color", family)
+        self.assertIn("bump", family)
+        self.assertIn("specular", family)
+        self.assertEqual(family["color"],   os.path.join("/tmp", "RyJeane_arms_1004.jpg"))
+        self.assertEqual(family["bump"],    os.path.join("/tmp", "RyJeane_armsB_1004.jpg"))
+        self.assertEqual(family["specular"], os.path.join("/tmp", "RyJeane_armsS_1004.jpg"))
+
+    def test_index_textures_by_family_groups_unknown_compact_suffix_by_prefix(self):
+        # Unknown suffix token before number should still stay in the same family
+        # when the longest shared prefix clearly matches the base texture name.
+        with mock.patch.object(dazconverter.os, "walk") as mock_walk:
+            mock_walk.return_value = [
+                (
+                    "/tmp",
+                    [],
+                    [
+                        "RyJeane_arms_1004.jpg",
+                        "RyJeane_armsX_1004.jpg",
+                    ],
+                )
+            ]
+            indexed = dazconverter._index_textures_by_family("/tmp")
+
+        self.assertIn("ryjeane_arms", indexed)
+        self.assertEqual(
+            len(indexed), 1, f"Expected one family bucket, got {list(indexed.keys())}"
+        )
+
+    def test_index_textures_by_family_regroups_ambiguous_compact_suffix(self):
+        # CharacterSkinN.jpg: the existing regex strips the trailing 'N' from
+        # "CharacterSkin" because it looks like a compact normal-map suffix,
+        # yielding candidate family "characterski" instead of "characterskin".
+        # The two-pass algorithm must detect that "characterskin" (with ≥2 members)
+        # is a prefix of the stem "characterskin" and re-group correctly.
+        with mock.patch.object(dazconverter.os, "walk") as mock_walk:
+            mock_walk.return_value = [
+                (
+                    "/tmp",
+                    [],
+                    [
+                        "CharacterSkin.jpg",    # base color / unknown
+                        "CharacterSkinB.jpg",   # bump
+                        "CharacterSkinN.jpg",   # normal (over-stripped → wrong candidate)
+                    ],
+                )
+            ]
+            indexed = dazconverter._index_textures_by_family("/tmp")
+
+        # All three files must land in one family key; the over-stripped key must be gone.
+        self.assertIn("characterskin", indexed)
+        self.assertNotIn("characterski", indexed)
+        self.assertEqual(
+            indexed["characterskin"]["bump"],
+            os.path.join("/tmp", "CharacterSkinB.jpg"),
+        )
+        # Both CharacterSkin.jpg and CharacterSkinN.jpg are typed "normal" by the
+        # classifier; whichever arrives first wins the slot.  The important thing is
+        # the key "characterski" is gone and "bump" is correctly placed.
+        self.assertIn("normal", indexed["characterskin"])
+
     def test_add_texture_with_manual_fallback_calls_callback_on_failure(self):
         class MaterialStub:
             name = "Trim.001"

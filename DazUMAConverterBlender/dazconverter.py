@@ -448,6 +448,26 @@ def _classify_texture_filename(texture_path):
     if re.search(r"(?:^|[_-])(d|diffuse|albedo|basecolor)\d*$", lower_stem):
         return "color"
 
+    # Detect compact uppercase map suffix embedded immediately before a variant number:
+    # e.g. RyJeane_armsB_1004 → 'B' is bump; RyJeane_torsoS_1002 → 'S' is specular.
+    # Case-sensitive: only fires when an UPPERCASE token follows a lowercase letter
+    # (DAZ convention), preventing false matches on plain _number suffixes.
+    compact_before_number = re.search(
+        r"(?<=[a-z])(TR|SP|SPEC|BM|BP|NM|NRM|NOR|RO|MT|B|N|R|M|S|D)_[0-9]+$",
+        stem,  # original case, not lower_stem
+    )
+    if compact_before_number:
+        _compact_pre_num_map = {
+            "tr": "transparency",
+            "sp": "specular", "spec": "specular", "s": "specular",
+            "bm": "bump", "bp": "bump", "b": "bump",
+            "nm": "normal", "nrm": "normal", "nor": "normal", "n": "normal",
+            "ro": "roughness", "r": "roughness",
+            "mt": "metallic", "m": "metallic",
+            "d": "color",
+        }
+        return _compact_pre_num_map.get(compact_before_number.group(1).lower(), "unknown")
+
     trailing_variant = re.search(r"_([0-9]+)([a-z]+)?$", lower_stem)
     if trailing_variant:
         variant_suffix = trailing_variant.group(2)
@@ -496,19 +516,26 @@ def _classify_texture_filename(texture_path):
 
 
 def _derive_texture_family_from_filename(texture_path):
-    texture_type = _classify_texture_filename(texture_path)
     stem = os.path.splitext(os.path.basename(texture_path))[0]
     stem = re.sub(r"_Base_TR$", "", stem, flags=re.IGNORECASE)
+    # Strip separator-based suffix tokens: _B, _NM, _roughness, _TR1, etc.
     stem = re.sub(
         r"(?:[_-])(TR|D|B|BM|BP|N|NM|NRM|NOR|R|RO|M|MT|S|SP|SPEC)\d*$",
         "",
         stem,
         flags=re.IGNORECASE,
     )
+    # Strip trailing _number (with any trailing letters, e.g. _1004 or _1004B)
     stem = re.sub(r"_[0-9]+[A-Za-z]*$", "", stem)
+    # Collapse letter+digits at end: s051Shorts05 → s051Shorts
     stem = re.sub(r"([A-Za-z])[0-9]+$", r"\1", stem)
-    if texture_type in {"transparency", "normal", "roughness", "metallic", "specular", "bump"}:
-        stem = re.sub(r"(TR|SP|SPEC|BM|BP|NM|NRM|NOR|RO|MT|B|N|R|M|S)$", "", stem, flags=re.IGNORECASE)
+    # Strip compact uppercase map suffix appended directly to the body-part word.
+    # Case-SENSITIVE (no re.IGNORECASE): the lookbehind (?<=[a-z]) ensures we only
+    # strip an UPPERCASE token following a lowercase letter — the DAZ convention for
+    # compact map suffixes (e.g. armsB → arms, torsoS → torso, lashesD → lashes).
+    # Multi-char tokens checked first to prevent partial matches (SP before S).
+    stem = re.sub(r"(?<=[a-z])(TR|SP|SPEC|BM|BP|NM|NRM|NOR|RO|MT)$", "", stem)
+    stem = re.sub(r"(?<=[a-z])(B|N|R|M|S|D)$", "", stem)
     stem = re.sub(r"[0-9]+$", "", stem)
     stem = stem.rstrip("_-")
     return stem or None
@@ -529,22 +556,115 @@ def _derive_texture_pattern_from_filename(texture_path):
 
 
 def _index_textures_by_family(base_path):
-    indexed_textures = {}
+    def _longest_common_prefix(left, right):
+        limit = min(len(left), len(right))
+        idx = 0
+        while idx < limit and left[idx] == right[idx]:
+            idx += 1
+        return left[:idx]
 
+    def _looks_like_variant_tail(tail):
+        tail = tail.lstrip("_-")
+        if not tail:
+            return True
+        if re.fullmatch(r"[0-9]+[a-z]*", tail):
+            return True
+        if re.fullmatch(
+            r"(?:tr|sp|spec|bm|bp|nm|nrm|nor|ro|mt|b|n|r|m|s|d)(?:[_-]?[0-9]+)?",
+            tail,
+        ):
+            return True
+        if re.fullmatch(
+            r"(?:diffuse|albedo|basecolor|normal|roughness|metallic|specular|gloss|glossiness|bump|height|displacement|alpha|opacity|mask|cutout|transparency)(?:[_-]?[0-9]+)?",
+            tail,
+        ):
+            return True
+        # Unknown one-letter suffix variants such as armsX_1004.
+        if re.fullmatch(r"[a-z](?:[_-]?[0-9]+)?", tail):
+            return True
+        return False
+
+    records = []
     for root, _dirs, files in os.walk(base_path):
         for filename in files:
             texture_path = os.path.join(root, filename)
             if not texture_path.lower().endswith(_VALID_TEXTURE_EXTENSIONS):
                 continue
 
-            family = _derive_texture_family_from_filename(texture_path)
-            if not family:
-                continue
+            stem = os.path.splitext(os.path.basename(texture_path))[0]
+            fallback_family = _derive_texture_family_from_filename(texture_path) or stem
+            records.append(
+                {
+                    "stem": stem,
+                    "stem_lower": stem.lower(),
+                    "texture_type": _classify_texture_filename(texture_path),
+                    "texture_path": texture_path,
+                    "fallback_family": fallback_family.lower(),
+                }
+            )
 
-            texture_type = _classify_texture_filename(texture_path)
-            family_entry = indexed_textures.setdefault(family.lower(), {})
-            if texture_type not in family_entry:
-                family_entry[texture_type] = texture_path
+    if not records:
+        return {}
+
+    sorted_records = sorted(records, key=lambda record: record["stem_lower"])
+    count = len(sorted_records)
+    parent = list(range(count))
+
+    def _find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def _union(left_index, right_index):
+        root_left = _find(left_index)
+        root_right = _find(right_index)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
+    for idx in range(count - 1):
+        left_stem = sorted_records[idx]["stem_lower"]
+        right_stem = sorted_records[idx + 1]["stem_lower"]
+        prefix = _longest_common_prefix(left_stem, right_stem)
+        if not prefix:
+            continue
+
+        left_tail = left_stem[len(prefix):]
+        right_tail = right_stem[len(prefix):]
+        if _looks_like_variant_tail(left_tail) and _looks_like_variant_tail(right_tail):
+            _union(idx, idx + 1)
+
+    groups = {}
+    for idx in range(count):
+        groups.setdefault(_find(idx), []).append(idx)
+
+    family_by_index = {}
+    for indices in groups.values():
+        if len(indices) == 1:
+            only_idx = indices[0]
+            family_by_index[only_idx] = sorted_records[only_idx]["fallback_family"]
+            continue
+
+        shared_prefix = sorted_records[indices[0]]["stem_lower"]
+        for idx in indices[1:]:
+            shared_prefix = _longest_common_prefix(
+                shared_prefix, sorted_records[idx]["stem_lower"]
+            )
+            if not shared_prefix:
+                break
+
+        family_key = re.sub(r"(?:[_-][0-9]+[a-z]*)$", "", shared_prefix).rstrip("_-")
+        if not family_key:
+            family_key = sorted_records[indices[0]]["fallback_family"]
+        for idx in indices:
+            family_by_index[idx] = family_key
+
+    indexed_textures = {}
+    for idx, record in enumerate(sorted_records):
+        family_entry = indexed_textures.setdefault(family_by_index[idx], {})
+        texture_type = record["texture_type"]
+        if texture_type not in family_entry:
+            family_entry[texture_type] = record["texture_path"]
 
     return indexed_textures
 
@@ -875,6 +995,13 @@ def setup_daz_materials(
     """
     _debug_log(f"setup_daz_materials called with search_base_path={search_base_path}")
     indexed_textures = _index_textures_by_family(search_base_path)
+    print(f"Indexed textures by family: {len(indexed_textures)} families found in '{search_base_path}'")
+    print(f"All indexed textures:")
+    for family, types_dict in indexed_textures.items():
+        print(f"  {family}:")
+        for texture_type, filepath in types_dict.items():
+            print(f"    - {texture_type}: {filepath}")
+    
     
     for material in bpy.data.materials:
         print(f"\nProcessing Material: {material.name}")
