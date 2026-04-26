@@ -65,7 +65,7 @@ namespace UMAConverter
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("UMA Converter Settings", EditorStyles.largeLabel);
             // Editor f�r das ScriptableObject darstellen
-            Editor editor = Editor.CreateEditor(settings);
+            UnityEditor.Editor editor = UnityEditor.Editor.CreateEditor(settings);
             editor.OnInspectorGUI();
         }
 
