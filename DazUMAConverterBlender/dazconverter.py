@@ -579,6 +579,12 @@ def _index_textures_by_family(base_path):
             tail,
         ):
             return True
+        # DAZ hair variants can use forms like "T_Base_TR".
+        if re.fullmatch(
+            r"[a-z]_(?:base_)?(?:tr|alpha|opacity|mask|cutout|transparency)(?:[_-]?[0-9]+)?",
+            tail,
+        ):
+            return True
         # Unknown one-letter suffix variants such as armsX_1004.
         if re.fullmatch(r"[a-z](?:[_-]?[0-9]+)?", tail):
             return True
@@ -669,25 +675,91 @@ def _index_textures_by_family(base_path):
     return indexed_textures
 
 
-def _resolve_texture_family(material, textures_in_nodes, texture_pattern):
+def _resolve_texture_family(
+    material,
+    textures_in_nodes,
+    texture_pattern,
+    indexed_textures,
+    material_texture_paths=None,
+):
+    indexed_textures = indexed_textures or {}
+    indexed_keys = set(indexed_textures.keys())
+
+    def _clean_family_key(candidate):
+        if not candidate:
+            return None
+        family = candidate.lower()
+        family = re.sub(r"\[[^\]]*\]", "", family)
+        family = family.replace("*", "")
+        family = family.rstrip("_-")
+        return family or None
+
+    def _family_candidates_from_path(texture_path):
+        family = _clean_family_key(_derive_texture_family_from_filename(texture_path))
+        if not family:
+            return []
+        variants = [family]
+        # Variant forms like SW_ToulouseT_Base_TR can derive to sw_toulouset.
+        # When folder index already contains sw_toulouse, prefer that base family.
+        if family.endswith("t") and len(family) > 1:
+            variants.append(family[:-1])
+        return variants
+
+    def _pick_from_candidates(candidates):
+        exact_matches = [candidate for candidate in candidates if candidate in indexed_keys]
+        if exact_matches:
+            def _exact_score(family_key):
+                family_maps = indexed_textures.get(family_key, {})
+                return (5 if "color" in family_maps else 0) + len(family_maps)
+
+            return max(exact_matches, key=_exact_score)
+        # Fallback to best prefix match from folder index when exact family key is absent.
+        for candidate in candidates:
+            matches = [
+                key
+                for key in indexed_keys
+                if candidate.startswith(key) or key.startswith(candidate)
+            ]
+            if matches:
+                return max(matches, key=len)
+        return None
+
     prioritized_paths = []
     if "color" in textures_in_nodes:
         prioritized_paths.append(textures_in_nodes["color"])
     prioritized_paths.extend(textures_in_nodes.values())
+    prioritized_paths.extend(material_texture_paths or [])
 
     for texture_path in prioritized_paths:
-        family = _derive_texture_family_from_filename(texture_path)
-        if family:
-            return family
+        resolved = _pick_from_candidates(_family_candidates_from_path(texture_path))
+        if resolved:
+            return resolved
 
-    if not texture_pattern:
-        return None
+    pattern_family = _clean_family_key(texture_pattern)
+    if pattern_family:
+        resolved = _pick_from_candidates([pattern_family])
+        if resolved:
+            return resolved
+        if not indexed_keys:
+            return pattern_family
 
-    pattern_family = texture_pattern
-    pattern_family = re.sub(r"\[[^\]]*\]", "", pattern_family)
-    pattern_family = pattern_family.replace("*", "")
-    pattern_family = pattern_family.rstrip("_-")
-    return pattern_family or None
+    # Last-resort: choose the folder family with best overlap to maps in nodes.
+    if indexed_keys:
+        desired_maps = set(textures_in_nodes.keys())
+
+        def _family_score(family_key):
+            score = 0
+            family_maps = set(indexed_textures.get(family_key, {}).keys())
+            score += 10 * len(desired_maps & family_maps)
+            if "color" in family_maps:
+                score += 2
+            if texture_pattern and family_key in _clean_family_key(texture_pattern):
+                score += 3
+            return score
+
+        return max(indexed_keys, key=_family_score)
+
+    return None
 
 
 def _collect_material_textures_by_type(material):
@@ -1052,7 +1124,13 @@ def setup_daz_materials(
                 manual_mapping_callback=manual_mapping_callback,
             )
 
-        texture_family = _resolve_texture_family(material, textures_in_nodes, texture_pattern)
+        texture_family = _resolve_texture_family(
+            material,
+            textures_in_nodes,
+            texture_pattern,
+            indexed_textures,
+            material_texture_paths=material_texture_paths,
+        )
         family_textures = indexed_textures.get(texture_family.lower(), {}) if texture_family else {}
         if texture_family:
             print(f"  → Texture family: {texture_family}")
