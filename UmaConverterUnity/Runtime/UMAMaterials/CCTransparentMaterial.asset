@@ -10,10 +10,10 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ac718b8ce852d1445b8fbe5c323134ac, type: 3}
-  m_Name: CCMaterial
+  m_Name: CCTransparentMaterial
   m_EditorClassIdentifier: 
   translateSRP: 0
-  _material: {fileID: 2100000, guid: fb2d6d565cbbb794a83ef9c326efbe98, type: 2}
+  _material: {fileID: 2100000, guid: a1e2d3c4b5a68f7e8d9c0b1a2f3e4d5c6, type: 2}
   srpMaterials: []
   secondPass: {fileID: 0}
   materialType: 1
