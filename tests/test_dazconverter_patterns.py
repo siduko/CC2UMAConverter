@@ -251,6 +251,57 @@ class TestDazConverterPatternConfig(unittest.TestCase):
             len(indexed), 1, f"Expected one family bucket, got {list(indexed.keys())}"
         )
 
+    def test_index_textures_by_family_groups_t_base_tr_under_same_family(self):
+        # DAZ hair transparency variant can appear as ...T_Base_TR.
+        # It must stay under the same family key as the base color and TR1 maps.
+        with mock.patch.object(dazconverter.os, "walk") as mock_walk:
+            mock_walk.return_value = [
+                (
+                    "/tmp",
+                    [],
+                    [
+                        "SW_Toulouse_01.jpg",
+                        "SW_Toulouse_TR1.jpg",
+                        "SW_ToulouseT_Base_TR.jpg",
+                    ],
+                )
+            ]
+
+            indexed = dazconverter._index_textures_by_family("/tmp")
+
+        self.assertIn("sw_toulouse", indexed)
+        self.assertNotIn("sw_toulouset", indexed)
+        self.assertEqual(
+            len(indexed), 1, f"Expected one family bucket, got {list(indexed.keys())}"
+        )
+
+    def test_resolve_texture_family_uses_folder_index_with_node_context(self):
+        # If nodes only expose a transparency variant like SW_ToulouseT_Base_TR,
+        # resolver should use indexed folder families to select sw_toulouse.
+        material_stub = types.SimpleNamespace(name="Strands")
+        textures_in_nodes = {
+            "transparency": "/tmp/SW_ToulouseT_Base_TR.jpg"
+        }
+        indexed_textures = {
+            "sw_toulouse": {
+                "color": "/tmp/SW_Toulouse_01.jpg",
+                "transparency": "/tmp/SW_Toulouse_TR1.jpg",
+            },
+            "sw_toulouset": {
+                "transparency": "/tmp/SW_ToulouseT_Base_TR.jpg",
+            },
+        }
+
+        family = dazconverter._resolve_texture_family(
+            material_stub,
+            textures_in_nodes,
+            "SW_Toulouse_[0-9]*",
+            indexed_textures,
+            material_texture_paths=["/tmp/SW_ToulouseT_Base_TR.jpg"],
+        )
+
+        self.assertEqual(family, "sw_toulouse")
+
     def test_index_textures_by_family_regroups_ambiguous_compact_suffix(self):
         # CharacterSkinN.jpg: the existing regex strips the trailing 'N' from
         # "CharacterSkin" because it looks like a compact normal-map suffix,
