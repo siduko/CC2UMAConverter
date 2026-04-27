@@ -283,32 +283,74 @@ namespace UMAConverter
         private SlotDataAsset GenerateMultiMaterialSlots(UMAData_Slot slot, SkinnedMeshRenderer slotMesh, List<string> sourceMaterialNames)
         {
             SlotDataAsset primarySlotAsset = null;
-            List<string> allMaterialNames = new List<string>();
+            List<int> materialIndices = new List<int>();
             List<SlotDataAsset> layeredSlots = new List<SlotDataAsset>();
             List<OverlayDataAsset> layeredOverlays = new List<OverlayDataAsset>();
 
-            // Add primary overlay first if specified
-            if (!string.IsNullOrEmpty(slot.overlay))
+            if (slotMesh == null || slotMesh.sharedMaterials == null)
             {
-                allMaterialNames.Add(slot.overlay);
+                Debug.LogWarning("[UMAConverter] Multi-material slot generation aborted: no shared materials for slot '" + slot.name + "'.");
+                return null;
             }
 
-            // Add all material names from the mesh
-            foreach (string materialName in sourceMaterialNames)
+            for (int materialIndex = 0; materialIndex < slotMesh.sharedMaterials.Length; materialIndex++)
             {
-                if (materialName != "<null>" && !string.Equals(materialName, slot.overlay, System.StringComparison.OrdinalIgnoreCase))
+                Material sourceMaterial = slotMesh.sharedMaterials[materialIndex];
+                if (sourceMaterial != null && !string.IsNullOrEmpty(sourceMaterial.name))
                 {
-                    allMaterialNames.Add(materialName);
+                    materialIndices.Add(materialIndex);
                 }
             }
 
-            // Create separate slot+overlay for each material (collected for layered wardrobe)
-            for (int materialIndex = 0; materialIndex < allMaterialNames.Count; materialIndex++)
+            if (materialIndices.Count == 0)
             {
-                string materialName = allMaterialNames[materialIndex];
-                
-                // Create a unique slot name for this material
-                string uniqueSlotName = slot.name + "_" + materialName;
+                Debug.LogWarning("[UMAConverter] Multi-material slot generation found no valid material names for slot '" + slot.name + "'. Falling back to single-material generation.");
+                return GenerateSingleMaterialSlot(slot, slotMesh);
+            }
+
+            // Keep the json primary overlay first when present.
+            if (!string.IsNullOrEmpty(slot.overlay))
+            {
+                int primaryMaterialIndex = -1;
+                for (int i = 0; i < materialIndices.Count; i++)
+                {
+                    int candidateIndex = materialIndices[i];
+                    Material candidateMaterial = slotMesh.sharedMaterials[candidateIndex];
+                    if (candidateMaterial != null && string.Equals(candidateMaterial.name, slot.overlay, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        primaryMaterialIndex = i;
+                        break;
+                    }
+                }
+
+                if (primaryMaterialIndex > 0)
+                {
+                    int matchedIndex = materialIndices[primaryMaterialIndex];
+                    materialIndices.RemoveAt(primaryMaterialIndex);
+                    materialIndices.Insert(0, matchedIndex);
+                }
+            }
+
+            Dictionary<string, int> slotNameCounts = new Dictionary<string, int>();
+
+            // Create separate slot+overlay for each material (collected for layered wardrobe)
+            for (int i = 0; i < materialIndices.Count; i++)
+            {
+                int materialIndex = materialIndices[i];
+                Material sourceMaterial = slotMesh.sharedMaterials[materialIndex];
+                string materialName = sourceMaterial != null ? sourceMaterial.name : ("SubMesh" + materialIndex);
+                string uniqueSlotNameBase = slot.name + "_" + materialName;
+                string uniqueSlotName = uniqueSlotNameBase;
+                if (slotNameCounts.ContainsKey(uniqueSlotNameBase))
+                {
+                    slotNameCounts[uniqueSlotNameBase]++;
+                    uniqueSlotName = uniqueSlotNameBase + "_" + slotNameCounts[uniqueSlotNameBase];
+                }
+                else
+                {
+                    slotNameCounts[uniqueSlotNameBase] = 1;
+                }
+
                 string slotFolder = workingDirectory + "/Slots";
                 string assetFolder = "";
                 string assetName = uniqueSlotName;
@@ -321,24 +363,55 @@ namespace UMAConverter
                 bool calcTangents = true;
                 string stripBones = "";
 
-                Debug.Log("[UMAConverter] Creating sub-slot for material: originalSlot='" + slot.name + "', material='" + materialName + "', uniqueSlotName='" + uniqueSlotName + "'");
+                Debug.Log("[UMAConverter] Creating sub-slot for material: originalSlot='" + slot.name + "', material='" + materialName + "', subMeshIndex=" + materialIndex + ", uniqueSlotName='" + uniqueSlotName + "'.");
 
-                SlotBuilderParameters slotBuilderParameters = new SlotBuilderParameters();
-                slotBuilderParameters.slotFolder = slotFolder;
-                slotBuilderParameters.assetFolder = assetFolder;
-                slotBuilderParameters.assetName = assetName;
-                slotBuilderParameters.slotName = uniqueSlotName;
-                slotBuilderParameters.nameByMaterial = nameByMaterial;
-                slotBuilderParameters.slotMesh = slotMesh;
-                slotBuilderParameters.material = material;
-                slotBuilderParameters.seamsMesh = seamsMesh;
-                slotBuilderParameters.keepList = keepBoneNames;
-                slotBuilderParameters.rootBone = rootBone;
-                slotBuilderParameters.binarySerialization = binarySerialization;
-                slotBuilderParameters.calculateTangents = calcTangents;
-                slotBuilderParameters.stripBones = stripBones;
+                GameObject isolatedRendererObject = null;
+                GameObject isolatedRendererRoot = null;
+                Mesh isolatedMesh = null;
+                SkinnedMeshRenderer isolatedRenderer = CreateSingleSubmeshRenderer(slotMesh, materialIndex, uniqueSlotName, out isolatedRendererRoot, out isolatedRendererObject, out isolatedMesh);
+                if (isolatedRenderer == null)
+                {
+                    Debug.LogWarning("[UMAConverter] Failed to create isolated renderer for slot '" + slot.name + "', material='" + materialName + "', subMeshIndex=" + materialIndex + ".");
+                    continue;
+                }
 
-                SlotDataAsset subSlotAsset = UMASlotProcessingUtil.CreateSlotData(slotBuilderParameters);
+                SlotDataAsset subSlotAsset = null;
+                try
+                {
+                    SlotBuilderParameters slotBuilderParameters = new SlotBuilderParameters();
+                    slotBuilderParameters.slotFolder = slotFolder;
+                    slotBuilderParameters.assetFolder = assetFolder;
+                    slotBuilderParameters.assetName = assetName;
+                    slotBuilderParameters.slotName = uniqueSlotName;
+                    slotBuilderParameters.nameByMaterial = nameByMaterial;
+                    slotBuilderParameters.slotMesh = isolatedRenderer;
+                    slotBuilderParameters.material = material;
+                    slotBuilderParameters.seamsMesh = seamsMesh;
+                    slotBuilderParameters.keepList = keepBoneNames;
+                    slotBuilderParameters.rootBone = rootBone;
+                    slotBuilderParameters.binarySerialization = binarySerialization;
+                    slotBuilderParameters.calculateTangents = calcTangents;
+                    slotBuilderParameters.stripBones = stripBones;
+
+                    subSlotAsset = UMASlotProcessingUtil.CreateSlotData(slotBuilderParameters);
+                }
+                finally
+                {
+                    if (isolatedRendererRoot != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(isolatedRendererRoot);
+                    }
+
+                    else if (isolatedRendererObject != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(isolatedRendererObject);
+                    }
+
+                    if (isolatedMesh != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(isolatedMesh);
+                    }
+                }
 
                 Debug.Log("[UMAConverter] Sub-slot asset created: originalSlot='" + slot.name + "', material='" + materialName + "', slotAsset='" + (subSlotAsset != null ? subSlotAsset.name : "<null>") + "', path='" + GetAssetPathSafe(subSlotAsset) + "'.");
 
@@ -362,9 +435,10 @@ namespace UMAConverter
                         if (overlayAsset != null)
                         {
                             Debug.Log("[UMAConverter] Sub-overlay created: originalSlot='" + slot.name + "', material='" + materialName + "', overlay='" + overlayAsset.overlayName + "', path='" + GetAssetPathSafe(overlayAsset) + "'.");
-                            layeredOverlays.Add(overlayAsset);
                         }
                     }
+
+                    layeredOverlays.Add(overlayAsset);
 
                     // Track slots for race (if applicable)
                     List<OverlayDataAsset> subSlotOverlays = new List<OverlayDataAsset>();
@@ -397,9 +471,210 @@ namespace UMAConverter
                 #endif
             }
 
-            Debug.Log("[UMAConverter] GenerateSlotAsset end (multi-material): slot='" + slot.name + "', totalMaterialSlots=" + allMaterialNames.Count + ", created " + allMaterialNames.Count + " layered slots+overlays in single wardrobe recipe.");
+            Debug.Log("[UMAConverter] GenerateSlotAsset end (multi-material): slot='" + slot.name + "', totalMaterialSlots=" + materialIndices.Count + ", created " + layeredSlots.Count + " isolated submesh slots+overlays in single wardrobe recipe.");
 
             return primarySlotAsset;
+        }
+
+        private SkinnedMeshRenderer CreateSingleSubmeshRenderer(SkinnedMeshRenderer sourceRenderer, int subMeshIndex, string slotName, out GameObject tempRootObject, out GameObject tempObject, out Mesh tempMesh)
+        {
+            tempRootObject = null;
+            tempObject = null;
+            tempMesh = null;
+
+            if (sourceRenderer == null || sourceRenderer.sharedMesh == null)
+            {
+                return null;
+            }
+
+            Mesh sourceMesh = sourceRenderer.sharedMesh;
+            if (subMeshIndex < 0 || subMeshIndex >= sourceMesh.subMeshCount)
+            {
+                Debug.LogWarning("[UMAConverter] Invalid subMeshIndex=" + subMeshIndex + " for mesh '" + sourceMesh.name + "' with subMeshCount=" + sourceMesh.subMeshCount + ".");
+                return null;
+            }
+
+            int[] sourceTriangles = sourceMesh.GetTriangles(subMeshIndex);
+            if (sourceTriangles == null || sourceTriangles.Length == 0)
+            {
+                Debug.LogWarning("[UMAConverter] Submesh " + subMeshIndex + " has no triangles for mesh '" + sourceMesh.name + "'.");
+                return null;
+            }
+
+            Dictionary<int, int> vertexRemap = new Dictionary<int, int>();
+            List<int> uniqueSourceVertexIndices = new List<int>();
+            int[] remappedTriangles = new int[sourceTriangles.Length];
+
+            for (int triangleIndex = 0; triangleIndex < sourceTriangles.Length; triangleIndex++)
+            {
+                int sourceVertexIndex = sourceTriangles[triangleIndex];
+                int remappedVertexIndex;
+                if (!vertexRemap.TryGetValue(sourceVertexIndex, out remappedVertexIndex))
+                {
+                    remappedVertexIndex = uniqueSourceVertexIndices.Count;
+                    vertexRemap[sourceVertexIndex] = remappedVertexIndex;
+                    uniqueSourceVertexIndices.Add(sourceVertexIndex);
+                }
+
+                remappedTriangles[triangleIndex] = remappedVertexIndex;
+            }
+
+            tempMesh = new Mesh();
+            tempMesh.name = sourceMesh.name + "_" + slotName + "_SubMesh";
+            tempMesh.vertices = RemapVector3Array(sourceMesh.vertices, uniqueSourceVertexIndices);
+            tempMesh.bindposes = sourceMesh.bindposes;
+
+            BoneWeight[] sourceBoneWeights = sourceMesh.boneWeights;
+            if (sourceBoneWeights != null && sourceBoneWeights.Length == sourceMesh.vertexCount)
+            {
+                BoneWeight[] remappedBoneWeights = new BoneWeight[uniqueSourceVertexIndices.Count];
+                for (int remappedVertexIndex = 0; remappedVertexIndex < uniqueSourceVertexIndices.Count; remappedVertexIndex++)
+                {
+                    remappedBoneWeights[remappedVertexIndex] = sourceBoneWeights[uniqueSourceVertexIndices[remappedVertexIndex]];
+                }
+
+                tempMesh.boneWeights = remappedBoneWeights;
+            }
+
+            if (sourceMesh.normals != null && sourceMesh.normals.Length == sourceMesh.vertexCount)
+            {
+                tempMesh.normals = RemapVector3Array(sourceMesh.normals, uniqueSourceVertexIndices);
+            }
+
+            if (sourceMesh.tangents != null && sourceMesh.tangents.Length == sourceMesh.vertexCount)
+            {
+                tempMesh.tangents = RemapVector4Array(sourceMesh.tangents, uniqueSourceVertexIndices);
+            }
+
+            if (sourceMesh.colors != null && sourceMesh.colors.Length == sourceMesh.vertexCount)
+            {
+                tempMesh.colors = RemapColorArray(sourceMesh.colors, uniqueSourceVertexIndices);
+            }
+
+            if (sourceMesh.uv != null && sourceMesh.uv.Length == sourceMesh.vertexCount)
+            {
+                tempMesh.uv = RemapVector2Array(sourceMesh.uv, uniqueSourceVertexIndices);
+            }
+
+            if (sourceMesh.uv2 != null && sourceMesh.uv2.Length == sourceMesh.vertexCount)
+            {
+                tempMesh.uv2 = RemapVector2Array(sourceMesh.uv2, uniqueSourceVertexIndices);
+            }
+
+            if (sourceMesh.uv3 != null && sourceMesh.uv3.Length == sourceMesh.vertexCount)
+            {
+                tempMesh.uv3 = RemapVector2Array(sourceMesh.uv3, uniqueSourceVertexIndices);
+            }
+
+            if (sourceMesh.uv4 != null && sourceMesh.uv4.Length == sourceMesh.vertexCount)
+            {
+                tempMesh.uv4 = RemapVector2Array(sourceMesh.uv4, uniqueSourceVertexIndices);
+            }
+
+            tempMesh.subMeshCount = 1;
+            tempMesh.SetTriangles(remappedTriangles, 0);
+            tempMesh.RecalculateBounds();
+            if (tempMesh.normals == null || tempMesh.normals.Length == 0)
+            {
+                tempMesh.RecalculateNormals();
+            }
+
+            Transform sourceParent = sourceRenderer.transform.parent;
+            if (sourceParent != null)
+            {
+                tempRootObject = UnityEngine.Object.Instantiate(sourceParent.gameObject);
+                tempRootObject.name = "__UMAConverterRoot_" + slotName + "_SubMesh_" + subMeshIndex;
+
+                SkinnedMeshRenderer[] candidateRenderers = tempRootObject.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+                foreach (SkinnedMeshRenderer candidateRenderer in candidateRenderers)
+                {
+                    if (candidateRenderer.name == sourceRenderer.name)
+                    {
+                        tempObject = candidateRenderer.gameObject;
+                        break;
+                    }
+                }
+            }
+
+            if (tempObject == null)
+            {
+                tempRootObject = new GameObject("__UMAConverterRoot_" + slotName + "_SubMesh_" + subMeshIndex);
+                tempObject = new GameObject(sourceRenderer.name);
+                tempObject.transform.SetParent(tempRootObject.transform, false);
+                tempObject.AddComponent<SkinnedMeshRenderer>();
+            }
+
+            tempObject.name = sourceRenderer.name;
+            SkinnedMeshRenderer isolatedRenderer = tempObject.GetComponent<SkinnedMeshRenderer>();
+            if (isolatedRenderer == null)
+            {
+                isolatedRenderer = tempObject.AddComponent<SkinnedMeshRenderer>();
+            }
+
+            isolatedRenderer.sharedMesh = tempMesh;
+
+            if (isolatedRenderer.bones == null || isolatedRenderer.bones.Length == 0)
+            {
+                isolatedRenderer.bones = sourceRenderer.bones;
+            }
+
+            if (isolatedRenderer.rootBone == null)
+            {
+                isolatedRenderer.rootBone = sourceRenderer.rootBone;
+            }
+
+            Material isolatedMaterial = null;
+            if (sourceRenderer.sharedMaterials != null && subMeshIndex < sourceRenderer.sharedMaterials.Length)
+            {
+                isolatedMaterial = sourceRenderer.sharedMaterials[subMeshIndex];
+            }
+
+            isolatedRenderer.sharedMaterials = isolatedMaterial != null ? new Material[] { isolatedMaterial } : new Material[0];
+            return isolatedRenderer;
+        }
+
+        private Vector3[] RemapVector3Array(Vector3[] sourceValues, List<int> sourceIndices)
+        {
+            Vector3[] remappedValues = new Vector3[sourceIndices.Count];
+            for (int i = 0; i < sourceIndices.Count; i++)
+            {
+                remappedValues[i] = sourceValues[sourceIndices[i]];
+            }
+
+            return remappedValues;
+        }
+
+        private Vector4[] RemapVector4Array(Vector4[] sourceValues, List<int> sourceIndices)
+        {
+            Vector4[] remappedValues = new Vector4[sourceIndices.Count];
+            for (int i = 0; i < sourceIndices.Count; i++)
+            {
+                remappedValues[i] = sourceValues[sourceIndices[i]];
+            }
+
+            return remappedValues;
+        }
+
+        private Vector2[] RemapVector2Array(Vector2[] sourceValues, List<int> sourceIndices)
+        {
+            Vector2[] remappedValues = new Vector2[sourceIndices.Count];
+            for (int i = 0; i < sourceIndices.Count; i++)
+            {
+                remappedValues[i] = sourceValues[sourceIndices[i]];
+            }
+
+            return remappedValues;
+        }
+
+        private Color[] RemapColorArray(Color[] sourceValues, List<int> sourceIndices)
+        {
+            Color[] remappedValues = new Color[sourceIndices.Count];
+            for (int i = 0; i < sourceIndices.Count; i++)
+            {
+                remappedValues[i] = sourceValues[sourceIndices[i]];
+            }
+
+            return remappedValues;
         }
 
         /// <summary>
@@ -466,7 +741,7 @@ namespace UMAConverter
             bool useSharedPath = allowSharedPath && slot.isSharedOverlay(this.data) && overlayName == slot.overlay;
             string overlayPath = useSharedPath
                 ? workingDirectory + "/Overlays/" + overlayName
-                : workingDirectory + "/Slots/" + slot.name + "/" + overlayName;
+                : workingDirectory + "/Slots/" + slotName + "/" + overlayName;
 
             OverlayDataAsset overlayAsset = AssetDatabase.LoadAssetAtPath<OverlayDataAsset>(overlayPath + ".asset");
             bool overlayAlreadyExists = overlayAsset != null;
@@ -479,7 +754,7 @@ namespace UMAConverter
                 UpdateOverlay(overlayAsset, overlayPath, slotAsset, slotName, overlayName);
             }
 
-            Debug.Log("[UMAConverter] Overlay " + (overlayAlreadyExists ? "updated" : "created") + ": slot='" + slot.name + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "', overlay='" + overlayName + "', sharedPath=" + useSharedPath + ", path='" + overlayPath + ".asset'.");
+            Debug.Log("[UMAConverter] Overlay " + (overlayAlreadyExists ? "updated" : "created") + ": slot='" + slotName + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "', overlay='" + overlayName + "', sharedPath=" + useSharedPath + ", path='" + overlayPath + ".asset'.");
 
             return overlayAsset;
         }
