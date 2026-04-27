@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 using UnityEditor;
 using UnityEngine;
 using Newtonsoft.Json;
@@ -30,6 +31,9 @@ namespace UMAConverter
         private bool addToGlobalLibrary = true; // If true, the created assets will be added to the global library.
 
         private Dictionary<string, bool> overlayTransparencyMap = new Dictionary<string, bool>();
+        private Dictionary<string, OverlayDataAsset> sharedOverlayCache = new Dictionary<string, OverlayDataAsset>(System.StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, OverlayDataAsset> sharedOverlayByTextureSignature = new Dictionary<string, OverlayDataAsset>(System.StringComparer.Ordinal);
+        private Dictionary<string, string> textureFileHashCache = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="T:UMAConverter"/> class.
@@ -431,7 +435,7 @@ namespace UMAConverter
                     OverlayDataAsset overlayAsset = null;
                     if (!string.IsNullOrEmpty(materialName))
                     {
-                        overlayAsset = GetOrCreateOverlayAsset(slot, subSlotAsset, uniqueSlotName, materialName, false);
+                        overlayAsset = GetOrCreateOverlayAsset(slot, subSlotAsset, uniqueSlotName, materialName, true);
                         if (overlayAsset != null)
                         {
                             Debug.Log("[UMAConverter] Sub-overlay created: originalSlot='" + slot.name + "', material='" + materialName + "', overlay='" + overlayAsset.overlayName + "', path='" + GetAssetPathSafe(overlayAsset) + "'.");
@@ -578,6 +582,8 @@ namespace UMAConverter
             {
                 tempMesh.RecalculateNormals();
             }
+
+            Debug.Log("[UMAConverter] Isolated submesh mesh prepared: sourceMesh='" + sourceMesh.name + "', subMeshIndex=" + subMeshIndex + ", sourceVertexCount=" + sourceMesh.vertexCount + ", isolatedVertexCount=" + tempMesh.vertexCount + ", sourceTriangles=" + (sourceTriangles.Length / 3) + ", isolatedTriangles=" + (remappedTriangles.Length / 3) + ".");
 
             Transform sourceParent = sourceRenderer.transform.parent;
             if (sourceParent != null)
@@ -738,6 +744,31 @@ namespace UMAConverter
                 return null;
             }
 
+            string textureSignature = string.Empty;
+            if (allowSharedPath)
+            {
+                textureSignature = BuildOverlayTextureSignature(overlayName, slotAsset != null ? slotAsset.material : null);
+                if (!string.IsNullOrEmpty(textureSignature))
+                {
+                    OverlayDataAsset cachedByTexture;
+                    if (sharedOverlayByTextureSignature.TryGetValue(textureSignature, out cachedByTexture) && cachedByTexture != null)
+                    {
+                        Debug.Log("[UMAConverter] Overlay reused by texture signature: slot='" + slotName + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "', overlay='" + overlayName + "', cachedOverlay='" + cachedByTexture.overlayName + "', path='" + GetAssetPathSafe(cachedByTexture) + "'.");
+                        return cachedByTexture;
+                    }
+
+                    Debug.Log("[UMAConverter] Overlay signature cache miss: slot='" + slotName + "', overlay='" + overlayName + "', signaturePrefix='" + (textureSignature.Length > 24 ? textureSignature.Substring(0, 24) : textureSignature) + "'.");
+                }
+            }
+
+            OverlayDataAsset cachedSharedOverlay;
+            if (allowSharedPath && sharedOverlayCache.TryGetValue(overlayName, out cachedSharedOverlay) && cachedSharedOverlay != null)
+            {
+                string cachedOverlayPath = GetAssetPathSafe(cachedSharedOverlay);
+                Debug.Log("[UMAConverter] Overlay reused from name cache: slot='" + slotName + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "', overlay='" + overlayName + "', path='" + cachedOverlayPath + "'.");
+                return cachedSharedOverlay;
+            }
+
             bool useSharedPath = allowSharedPath && slot.isSharedOverlay(this.data) && overlayName == slot.overlay;
             string overlayPath = useSharedPath
                 ? workingDirectory + "/Overlays/" + overlayName
@@ -756,7 +787,97 @@ namespace UMAConverter
 
             Debug.Log("[UMAConverter] Overlay " + (overlayAlreadyExists ? "updated" : "created") + ": slot='" + slotName + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "', overlay='" + overlayName + "', sharedPath=" + useSharedPath + ", path='" + overlayPath + ".asset'.");
 
+            if (allowSharedPath && overlayAsset != null)
+            {
+                sharedOverlayCache[overlayName] = overlayAsset;
+                if (!string.IsNullOrEmpty(textureSignature))
+                {
+                    sharedOverlayByTextureSignature[textureSignature] = overlayAsset;
+                }
+            }
+
             return overlayAsset;
+        }
+
+        private string BuildOverlayTextureSignature(string overlayName, UMAMaterial slotMaterial)
+        {
+            UMAMaterial defaultMaterial = UMAConverterSettings.Instance.defaultMaterial;
+            Texture[] slotMaterialTextures = GetOverlayTextureList(overlayName, slotMaterial);
+            Texture[] defaultMaterialTextures = System.Object.ReferenceEquals(slotMaterial, defaultMaterial)
+                ? slotMaterialTextures
+                : GetOverlayTextureList(overlayName, defaultMaterial);
+
+            bool hasSlotTextures = false;
+            foreach (Texture texture in slotMaterialTextures)
+            {
+                if (texture != null)
+                {
+                    hasSlotTextures = true;
+                    break;
+                }
+            }
+
+            Texture[] resolvedTextures = hasSlotTextures ? slotMaterialTextures : defaultMaterialTextures;
+            return BuildTextureSignature(resolvedTextures);
+        }
+
+        private string BuildTextureSignature(Texture[] textures)
+        {
+            if (textures == null || textures.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            bool hasAnyTexture = false;
+            List<string> signatureParts = new List<string>();
+            for (int i = 0; i < textures.Length; i++)
+            {
+                Texture texture = textures[i];
+                if (texture == null)
+                {
+                    signatureParts.Add("null");
+                    continue;
+                }
+
+                hasAnyTexture = true;
+                string texturePath = AssetDatabase.GetAssetPath(texture);
+                if (string.IsNullOrEmpty(texturePath))
+                {
+                    signatureParts.Add("memory:" + texture.name);
+                    continue;
+                }
+
+                signatureParts.Add(GetTextureContentHash(texturePath));
+            }
+
+            return hasAnyTexture ? string.Join("|", signatureParts) : string.Empty;
+        }
+
+        private string GetTextureContentHash(string textureAssetPath)
+        {
+            string cachedHash;
+            if (textureFileHashCache.TryGetValue(textureAssetPath, out cachedHash))
+            {
+                return cachedHash;
+            }
+
+            string absolutePath = Path.Combine(Directory.GetCurrentDirectory(), textureAssetPath);
+            if (!File.Exists(absolutePath))
+            {
+                Hash128 fallbackHash = AssetDatabase.GetAssetDependencyHash(textureAssetPath);
+                string fallbackHashText = "asset:" + fallbackHash.ToString();
+                textureFileHashCache[textureAssetPath] = fallbackHashText;
+                return fallbackHashText;
+            }
+
+            using (FileStream stream = File.OpenRead(absolutePath))
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                byte[] hashBytes = sha256.ComputeHash(stream);
+                string hashText = System.BitConverter.ToString(hashBytes).Replace("-", string.Empty).ToLowerInvariant();
+                textureFileHashCache[textureAssetPath] = hashText;
+                return hashText;
+            }
         }
 
         private string GetAssetPathSafe(Object asset)
@@ -803,8 +924,12 @@ namespace UMAConverter
             string textureOverlayName = !string.IsNullOrEmpty(overlayName) ? overlayName : slotName;
             
             // Get textures first to populate transparency map
-            Texture[] slotMaterialTextures = GetOverlayTextureList(textureOverlayName, slotAsset.material);
-            Texture[] defaultMaterialTextures = GetOverlayTextureList(textureOverlayName, UMAConverterSettings.Instance.defaultMaterial);
+            UMAMaterial slotMaterial = slotAsset != null ? slotAsset.material : null;
+            UMAMaterial defaultMaterial = UMAConverterSettings.Instance.defaultMaterial;
+            Texture[] slotMaterialTextures = GetOverlayTextureList(textureOverlayName, slotMaterial);
+            Texture[] defaultMaterialTextures = System.Object.ReferenceEquals(slotMaterial, defaultMaterial)
+                ? slotMaterialTextures
+                : GetOverlayTextureList(textureOverlayName, defaultMaterial);
             
             // Determine which material to use based on transparency policy
             UMAMaterial materialToUse = UMAConverterSettings.Instance.defaultMaterial;
