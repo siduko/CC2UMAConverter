@@ -5,9 +5,9 @@
   "description": "This Plugin provides a Asset Postprocessor to Convert UMA Races and Clothing exported by the Blender UMA Converter Plugin\nImportant: This Plugin is under Active Development, the Code is a Mess and it might break your Project. Use at your own Risk!",
   "unity": "2022.3",
   "unityRelease": "20f1",
-  "documentationUrl": "https://ovstudio-tech.com/",
-  "changelogUrl": "https://ovstudio-tech.com/",
-  "licensesUrl": "https://ovstudio-tech.com/",
+  "documentationUrl": "https://ovs-tech.com/",
+  "changelogUrl": "https://ovs-tech.com/",
+  "licensesUrl": "https://ovs-tech.com/",
   "dependencies": {
     "com.unity.nuget.newtonsoft-json": "3.2.1"
   },
@@ -17,8 +17,8 @@
     "UMA"
   ],
   "author": {
-    "name": "Valentin Winkelmann",
-    "email": "info@valentinwinkelmann.com",
-    "url": "https://ovstudio-tech.com/"
+    "name": "Lai Vu",
+    "email": "support@ovs-tech.com",
+    "url": "https://ovs-tech.com/"
   }
 }

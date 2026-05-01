@@ -53,7 +53,7 @@ namespace UMAConverter
 
             // Load the model
             this.model = AssetDatabase.LoadAssetAtPath<GameObject>(MeshPath);
-            if(this.model == null) throw new System.Exception("Model not found at " + MeshPath);
+            if (this.model == null) throw new System.Exception("Model not found at " + MeshPath);
 
         }
 
@@ -166,7 +166,7 @@ namespace UMAConverter
 
             // Check if this is a multi-material mesh
             bool isMultiMaterial = slotMesh != null && slotMesh.sharedMaterials != null && slotMesh.sharedMaterials.Length > 1;
-            
+
             if (isMultiMaterial)
             {
                 Debug.Log("[UMAConverter] MULTI-MATERIAL SLOT DETECTED: slot='" + slot.name + "' has " + slotMesh.sharedMaterials.Length + " materials. Creating separate slot+overlay+wardrobe for each material.");
@@ -251,12 +251,12 @@ namespace UMAConverter
             {
                 string recipePath = workingDirectory + "/Wardrobe/" + slot.name + "_Recipe";
                 UMAWardrobeRecipe recipe = CreateRecipe(recipePath, slotAsset, overlayAsset, addToGlobalLibrary, slot.wardrobeSlot);
-                #if UMAConverterGCInventory
+#if UMAConverterGCInventory
                 if (UMAConverterSettings.Instance.CreateItems)
                 {
                     UMAConverter.integrations.GameCreatorInventory.CreateItem(recipe, workingDirectory + "/Items/", slot.name);
                 }
-                #endif
+#endif
             }
 
             if (slotAsset == null)
@@ -466,13 +466,13 @@ namespace UMAConverter
                 string recipePath = workingDirectory + "/Wardrobe/" + slot.name + "_Recipe";
                 UMAWardrobeRecipe recipe = CreateLayeredRecipe(recipePath, layeredSlots, layeredOverlays, addToGlobalLibrary, slot.wardrobeSlot);
                 Debug.Log("[UMAConverter] Layered wardrobe recipe created: originalSlot='" + slot.name + "', layeredSlots=" + layeredSlots.Count + ", layeredOverlays=" + layeredOverlays.Count + ", recipePath='" + recipePath + "'");
-                
-                #if UMAConverterGCInventory
+
+#if UMAConverterGCInventory
                 if (UMAConverterSettings.Instance.CreateItems)
                 {
                     UMAConverter.integrations.GameCreatorInventory.CreateItem(recipe, workingDirectory + "/Items/", slot.name);
                 }
-                #endif
+#endif
             }
 
             Debug.Log("[UMAConverter] GenerateSlotAsset end (multi-material): slot='" + slot.name + "', totalMaterialSlots=" + materialIndices.Count + ", created " + layeredSlots.Count + " isolated submesh slots+overlays in single wardrobe recipe.");
@@ -899,7 +899,7 @@ namespace UMAConverter
             ApplyOverlayData(asset, slotAsset, slotName, overlayName, "CreateOverlay");
 
 
-            AssetDatabase.CreateAsset(asset, overlayPath +".asset");
+            AssetDatabase.CreateAsset(asset, overlayPath + ".asset");
             AssetDatabase.SaveAssets();
             return asset;
 
@@ -922,7 +922,7 @@ namespace UMAConverter
             }
 
             string textureOverlayName = !string.IsNullOrEmpty(overlayName) ? overlayName : slotName;
-            
+
             // Get textures first to populate transparency map
             UMAMaterial slotMaterial = slotAsset != null ? slotAsset.material : null;
             UMAMaterial defaultMaterial = UMAConverterSettings.Instance.defaultMaterial;
@@ -930,14 +930,14 @@ namespace UMAConverter
             Texture[] defaultMaterialTextures = System.Object.ReferenceEquals(slotMaterial, defaultMaterial)
                 ? slotMaterialTextures
                 : GetOverlayTextureList(textureOverlayName, defaultMaterial);
-            
+
             // Determine which material to use based on transparency policy
             UMAMaterial materialToUse = UMAConverterSettings.Instance.defaultMaterial;
             if (TransparencyOverlayPolicy.ShouldUseTransparentRendering(textureOverlayName, HasTransparencyTexture(textureOverlayName)))
             {
                 materialToUse = UMAConverterSettings.Instance.TransparentMaterial;
             }
-            
+
             asset.material = materialToUse;
 
             bool hasSlotTextures = false;
@@ -1010,7 +1010,7 @@ namespace UMAConverter
             }
 
             Debug.Log("[UMAConverter] GetOverlayTextureList end: resolvedTextures=" + resolvedTextureCount + ", returnedSlots=" + textures.Count);
-            
+
             // Track if this overlay has a transparency texture
             Texture2D transparencyTexture = GetTextureCandidateForSlot("TransparencyMap", overlayName, umaMaterial, searchFolders);
             if (transparencyTexture != null)
@@ -1021,8 +1021,8 @@ namespace UMAConverter
             {
                 overlayTransparencyMap[overlayName] = false;
             }
-            
-            return textures.ToArray();  
+
+            return textures.ToArray();
         }
 
         private string[] GetTextureSearchFolders()
@@ -1153,13 +1153,14 @@ namespace UMAConverter
             { "roughness", new List<string> { "Smoothness", "Glossiness", "roughness" } },
             { "Smoothness", new List<string> { "roughness", "Glossiness" } },
             { "EmissionMap", new List<string> { "Emission", "Emissive" } },
-            { "OcclusionMap", new List<string> { "Occlusion", "AO", "AmbientOcclusion" } },
+            { "OcclusionMap", new List<string> { "Occlusion", "AO", "AmbientOcclusion", "OcclusionMap" } },
             { "ParallaxMap", new List<string> { "Height", "Displacement" } },
             { "SpecGlossMap", new List<string> { "Specular", "SpecGloss", "SpecularGloss" } },
             { "DetailAlbedoMap", new List<string> { "DetailAlbedo", "DetailColor" } },
             { "DetailNormalMap", new List<string> { "DetailNormal", "DetailBump" } },
             { "DetailMask", new List<string>() },
-            { "TransparencyMap", new List<string> { "TransparencyMap", "Opacity", "Alpha", "OpacityMask" } }
+            { "TransparencyMap", new List<string> { "TransparencyMap", "Opacity", "Alpha", "OpacityMask" } },
+            { "SpecularMap", new List<string> { "SpecularMap", "SpecGlossMap", "Specular", "SpecGloss", "SpecularGloss" } }
         };
 
 
@@ -1208,7 +1209,7 @@ namespace UMAConverter
 
 
             int index = 0;
-            foreach(UMAData_RaceSlots raceSlot in raceSlots)
+            foreach (UMAData_RaceSlots raceSlot in raceSlots)
             {
                 SlotData slotData = new SlotData(raceSlot.slot);
 
@@ -1281,13 +1282,14 @@ namespace UMAConverter
             string TPosePath = workingDirectory + "/TPose/" + (this.data as UMAData_Race).name + "_TPose.asset";
 
             ModelImporter modelImporter = AssetImporter.GetAtPath(meshPath) as ModelImporter;
-            if(modelImporter != null)
+            if (modelImporter != null)
             {
                 var asset = ScriptableObject.CreateInstance<UMA.UmaTPose>();
                 asset.ReadFromHumanDescription(modelImporter.humanDescription);
                 AssetDatabase.CreateAsset(asset, TPosePath);
                 return asset;
-            } else
+            }
+            else
             {
                 throw new System.Exception("Failed to load ModelImporter for " + meshPath);
             }
@@ -1307,12 +1309,12 @@ namespace UMAConverter
 
                 GenerateSlotAsset(slot);
             }
-            if(data.type == UMADataType.race)
+            if (data.type == UMADataType.race)
             {
                 GenerateRaceAssets();
             }
             AssetDatabase.SaveAssets();
-            if(UMAConverterSettings.Instance.removeMeshAfterCreating)
+            if (UMAConverterSettings.Instance.removeMeshAfterCreating)
             {
                 AssetDatabase.DeleteAsset(meshPath);
                 AssetDatabase.DeleteAsset(jsonPath);
