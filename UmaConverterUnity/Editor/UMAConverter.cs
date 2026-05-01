@@ -1570,7 +1570,7 @@ namespace UMAConverter
             if (existing != null)
             {
                 TryAssignDnaAssetToController(existing, dynamicDnaAsset, raceName);
-                EnsureStartingBonePosePlugin(existing, null, raceName);
+                EnsureStartingBonePosePlugin(existing, null, raceName, null);
                 return existing;
             }
 
@@ -1645,7 +1645,7 @@ namespace UMAConverter
                 Debug.LogWarning("[UMAConverter] Dynamic DNA asset could not be assigned to generated DNAConverterController for race '" + raceName + "'.");
             }
 
-            EnsureStartingBonePosePlugin(controller, plugins, raceName);
+            EnsureStartingBonePosePlugin(controller, plugins, raceName, referenceController);
 
             controllerSO.ApplyModifiedPropertiesWithoutUndo();
             EditorUtility.SetDirty(controller);
@@ -1656,7 +1656,7 @@ namespace UMAConverter
             return controller;
         }
 
-        private void EnsureStartingBonePosePlugin(ScriptableObject controller, List<ScriptableObject> plugins, string raceName)
+        private void EnsureStartingBonePosePlugin(ScriptableObject controller, List<ScriptableObject> plugins, string raceName, ScriptableObject referenceController)
         {
             if (controller == null)
             {
@@ -1739,6 +1739,280 @@ namespace UMAConverter
             AssetDatabase.SaveAssetIfDirty(bonePosePlugin);
 
             Debug.Log("[UMAConverter] Starting bone pose assigned: race='" + raceName + "', pose='" + startingPose.name + "', plugin='" + bonePosePlugin.name + "'.");
+
+            PopulateSkeletonModifiersFromStartingPose(controller, plugins, startingPose, referenceController);
+        }
+
+        private void PopulateSkeletonModifiersFromStartingPose(ScriptableObject controller, List<ScriptableObject> plugins, UMABonePose startingPose, ScriptableObject referenceController)
+        {
+            if (controller == null || startingPose == null || startingPose.poses == null || startingPose.poses.Length == 0)
+            {
+                return;
+            }
+
+            ScriptableObject skeletonPlugin = FindSkeletonPlugin(controller, plugins);
+            if (skeletonPlugin == null)
+            {
+                return;
+            }
+
+            SerializedObject skeletonPluginSO = new SerializedObject(skeletonPlugin);
+            SerializedProperty modifiersProperty = skeletonPluginSO.FindProperty("_skeletonModifiers");
+            if (modifiersProperty == null || !modifiersProperty.isArray)
+            {
+                return;
+            }
+
+            if (modifiersProperty.arraySize > 0)
+            {
+                return;
+            }
+
+            int dnaTypeHash = GetDnaTypeHashFromController(controller);
+
+            // Build reference modifier lookup: name -> first matching SerializedProperty copy.
+            // Case-insensitive so "Head" matches "head", "LeftArm" matches "leftArm", etc.
+            Dictionary<string, SerializedProperty> refModifiersByName =
+                new Dictionary<string, SerializedProperty>(StringComparer.OrdinalIgnoreCase);
+
+            SerializedObject refPluginSO = null;
+            ScriptableObject refSkeletonPlugin = referenceController != null ? FindSkeletonPlugin(referenceController, null) : null;
+            if (refSkeletonPlugin != null)
+            {
+                refPluginSO = new SerializedObject(refSkeletonPlugin);
+                SerializedProperty refModifiers = refPluginSO.FindProperty("_skeletonModifiers");
+                if (refModifiers != null && refModifiers.isArray)
+                {
+                    for (int i = 0; i < refModifiers.arraySize; i++)
+                    {
+                        SerializedProperty refMod = refModifiers.GetArrayElementAtIndex(i).Copy();
+                        SerializedProperty refHashNameProp = refMod.FindPropertyRelative("_hashName");
+                        if (refHashNameProp == null) continue;
+                        string name = refHashNameProp.stringValue;
+                        if (string.IsNullOrEmpty(name)) continue;
+                        // Keep only the first entry per name — additional entries for the same
+                        // bone (different _property values) would need separate passes.
+                        if (!refModifiersByName.ContainsKey(name))
+                            refModifiersByName[name] = refMod;
+                    }
+                }
+            }
+
+            int count = startingPose.poses.Length;
+            modifiersProperty.arraySize = count;
+            int matchedCount = 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                UMABonePose.PoseBone poseBone = startingPose.poses[i];
+                SerializedProperty modifier = modifiersProperty.GetArrayElementAtIndex(i);
+
+                // Find best reference modifier: exact name first, then alias mapping.
+                SerializedProperty refModifier = FindBestReferenceModifier(poseBone.bone, refModifiersByName);
+
+                if (refModifier != null)
+                {
+                    CopySerializedPropertyValue(refModifier, modifier);
+                    matchedCount++;
+                }
+                else
+                {
+                    SerializedProperty propertyTypeProp = modifier.FindPropertyRelative("_property");
+                    if (propertyTypeProp != null) propertyTypeProp.intValue = 2; // Scale
+                    SetSkeletonModifierAxisValues(modifier, "_valuesX", 1f, 1f, 1f);
+                    SetSkeletonModifierAxisValues(modifier, "_valuesY", 1f, 1f, 1f);
+                    SetSkeletonModifierAxisValues(modifier, "_valuesZ", 1f, 1f, 1f);
+                }
+
+                // Always stamp the pose bone's own name/hash so the modifier targets
+                // the correct bone in this rig, not the reference rig's bone.
+                SerializedProperty hashNameProp = modifier.FindPropertyRelative("_hashName");
+                if (hashNameProp != null) hashNameProp.stringValue = poseBone.bone;
+
+                SerializedProperty hashProp = modifier.FindPropertyRelative("_hash");
+                if (hashProp != null) hashProp.intValue = poseBone.hash;
+
+                // Stamp the newly-generated DNA asset's type hash.
+                SerializedProperty umaDnaProp = modifier.FindPropertyRelative("_umaDNA");
+                if (umaDnaProp != null)
+                {
+                    SerializedProperty dnaTypeHashProp = umaDnaProp.FindPropertyRelative("dnaTypeHash");
+                    if (dnaTypeHashProp != null) dnaTypeHashProp.intValue = dnaTypeHash;
+                }
+            }
+
+            skeletonPluginSO.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(skeletonPlugin);
+            AssetDatabase.SaveAssetIfDirty(skeletonPlugin);
+
+            Debug.Log("[UMAConverter] Populated " + count + " skeleton modifiers (" + matchedCount + " from reference, " + (count - matchedCount) + " identity fallback) in '" + skeletonPlugin.name + "'.");
+        }
+
+        /// <summary>
+        /// Returns the first reference modifier whose _hashName matches poseBoneName
+        /// (case-insensitive), or whose UMA modifier name is listed as an alias for
+        /// that pose bone in <see cref="boneNameAliasMap"/>.
+        /// </summary>
+        private SerializedProperty FindBestReferenceModifier(
+            string poseBoneName,
+            Dictionary<string, SerializedProperty> refModifiersByName)
+        {
+            // 1. Exact (case-insensitive) match.
+            SerializedProperty result;
+            if (refModifiersByName.TryGetValue(poseBoneName, out result))
+                return result;
+
+            // 2. Alias-based match: DAZ/Genesis3 bone name → UMA modifier name(s).
+            string[] aliases;
+            if (boneNameAliasMap.TryGetValue(poseBoneName, out aliases))
+            {
+                foreach (string alias in aliases)
+                {
+                    if (refModifiersByName.TryGetValue(alias, out result))
+                        return result;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Maps DAZ/Genesis3 bone names to the equivalent UMA skeleton-modifier names
+        /// used in the HumanFemale reference controller.  Entries are case-insensitive
+        /// on both sides.  The first alias whose name exists in the reference wins.
+        /// </summary>
+        private static readonly Dictionary<string, string[]> boneNameAliasMap =
+            new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            // ── Breast ────────────────────────────────────────────────────────────
+            { "lPectoral",      new[] { "LeftOuterBreast" } },
+            { "rPectoral",      new[] { "RightOuterBreast" } },
+            // ── Head / neck ───────────────────────────────────────────────────────
+            { "head",           new[] { "HeadAdjust", "Head" } },
+            { "neckLower",      new[] { "NeckAdjust" } },
+            { "neckUpper",      new[] { "NeckAdjust" } },
+            // ── Spine / torso ─────────────────────────────────────────────────────
+            { "abdomenLower",   new[] { "SpineAdjust", "LowerBackBelly" } },
+            { "abdomenUpper",   new[] { "Spine1Adjust" } },
+            { "chestLower",     new[] { "LowerBackAdjust" } },
+            { "chestUpper",     new[] { "SpineAdjust" } },
+            { "hip",            new[] { "LowerBack" } },
+            { "pelvis",         new[] { "Position" } },
+            // ── Collar / trapezius ────────────────────────────────────────────────
+            { "lCollar",        new[] { "LeftShoulderAdjust", "LeftTrapezius" } },
+            { "rCollar",        new[] { "RightShoulderAdjust", "RightTrapezius" } },
+            // ── Upper arm ─────────────────────────────────────────────────────────
+            { "lShldrBend",     new[] { "LeftArmAdjust" } },
+            { "lShldrTwist",    new[] { "LeftArmAdjust" } },
+            { "rShldrBend",     new[] { "RightArmAdjust" } },
+            { "rShldrTwist",    new[] { "RightArmAdjust" } },
+            // ── Forearm ───────────────────────────────────────────────────────────
+            { "lForearmBend",   new[] { "LeftForeArmAdjust" } },
+            { "lForearmTwist",  new[] { "LeftForeArmTwistAdjust" } },
+            { "rForearmBend",   new[] { "RightForeArmAdjust" } },
+            { "rForearmTwist",  new[] { "RightForeArmTwistAdjust" } },
+            // ── Hand ──────────────────────────────────────────────────────────────
+            { "lHand",          new[] { "LeftHand" } },
+            { "rHand",          new[] { "RightHand" } },
+            // ── Upper leg ─────────────────────────────────────────────────────────
+            { "lThighBend",     new[] { "LeftUpLegAdjust" } },
+            { "lThighTwist",    new[] { "LeftUpLegAdjust" } },
+            { "rThighBend",     new[] { "RightUpLegAdjust" } },
+            { "rThighTwist",    new[] { "RightUpLegAdjust" } },
+            // ── Lower leg ─────────────────────────────────────────────────────────
+            { "lShin",          new[] { "LeftLegAdjust" } },
+            { "rShin",          new[] { "RightLegAdjust" } },
+            // ── Foot / toe ────────────────────────────────────────────────────────
+            { "lFoot",          new[] { "LeftFoot" } },
+            { "rFoot",          new[] { "RightFoot" } },
+            { "lToe",           new[] { "LeftFoot" } },
+            { "rToe",           new[] { "RightFoot" } },
+            { "lMetatarsals",   new[] { "LeftFoot" } },
+            { "rMetatarsals",   new[] { "RightFoot" } },
+            // ── Eye ───────────────────────────────────────────────────────────────
+            { "lEye",           new[] { "LeftEye", "LeftEyeAdjust" } },
+            { "rEye",           new[] { "RightEye", "RightEyeAdjust" } },
+            // ── Ear ───────────────────────────────────────────────────────────────
+            { "lEar",           new[] { "LeftEarAdjust" } },
+            { "rEar",           new[] { "RightEarAdjust" } },
+            // ── Jaw ───────────────────────────────────────────────────────────────
+            { "lowerJaw",       new[] { "MandibleAdjust", "Mandible" } },
+        };
+
+        private void SetSkeletonModifierAxisValues(SerializedProperty modifier, string axisName, float value, float min, float max)
+        {
+            SerializedProperty axisProp = modifier.FindPropertyRelative(axisName);
+            if (axisProp == null) return;
+
+            SerializedProperty valProp = axisProp.FindPropertyRelative("_val");
+            if (valProp != null)
+            {
+                SerializedProperty valueProp = valProp.FindPropertyRelative("_value");
+                if (valueProp != null) valueProp.floatValue = value;
+            }
+
+            SerializedProperty minProp = axisProp.FindPropertyRelative("_min");
+            if (minProp != null) minProp.floatValue = min;
+
+            SerializedProperty maxProp = axisProp.FindPropertyRelative("_max");
+            if (maxProp != null) maxProp.floatValue = max;
+        }
+
+        private ScriptableObject FindSkeletonPlugin(ScriptableObject controller, List<ScriptableObject> plugins)
+        {
+            if (plugins != null)
+            {
+                for (int i = 0; i < plugins.Count; i++)
+                {
+                    ScriptableObject candidate = plugins[i];
+                    if (candidate != null && string.Equals(candidate.GetType().Name, "SkeletonDNAConverterPlugin", StringComparison.Ordinal))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+
+            SerializedObject controllerSO = new SerializedObject(controller);
+            SerializedProperty pluginsProperty = controllerSO.FindProperty("_plugins");
+            if (pluginsProperty == null || !pluginsProperty.isArray)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < pluginsProperty.arraySize; i++)
+            {
+                ScriptableObject candidate = pluginsProperty.GetArrayElementAtIndex(i).objectReferenceValue as ScriptableObject;
+                if (candidate != null && string.Equals(candidate.GetType().Name, "SkeletonDNAConverterPlugin", StringComparison.Ordinal))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private int GetDnaTypeHashFromController(ScriptableObject controller)
+        {
+            SerializedObject controllerSO = new SerializedObject(controller);
+            SerializedProperty dnaAssetProp = controllerSO.FindProperty("_dnaAsset");
+            if (dnaAssetProp == null || dnaAssetProp.objectReferenceValue == null)
+            {
+                return 0;
+            }
+
+            UnityEngine.Object dnaAsset = dnaAssetProp.objectReferenceValue;
+
+            // Try serialized fields first
+            SerializedObject dnaAssetSO = new SerializedObject(dnaAsset);
+
+            SerializedProperty hashProp = dnaAssetSO.FindProperty("_dnaTypeHash");
+            if (hashProp != null) return hashProp.intValue;
+
+            hashProp = dnaAssetSO.FindProperty("dnaTypeHash");
+            if (hashProp != null) return hashProp.intValue;
+
+            // DynamicDNAAsset computes its hash at runtime from its asset name
+            return UMAUtils.StringToHash(dnaAsset.name);
         }
 
         private ScriptableObject FindBonePosePlugin(ScriptableObject controller, List<ScriptableObject> plugins)
@@ -2402,16 +2676,39 @@ namespace UMAConverter
 
             if (source.propertyType == SerializedPropertyType.Generic)
             {
-                SerializedProperty sourceCopy = source.Copy();
-                SerializedProperty targetCopy = target.Copy();
-                int depth = sourceCopy.depth;
-                
-                while (sourceCopy.Next(true) && sourceCopy.depth > depth)
+                if (source.isArray)
                 {
-                    SerializedProperty targetChild = targetCopy.FindPropertyRelative(sourceCopy.name);
-                    if (targetChild != null)
+                    // Arrays must be copied by index — FindPropertyRelative cannot resolve
+                    // Unity's internal ".Array.data[N]" names used by Next(true).
+                    target.arraySize = source.arraySize;
+                    for (int i = 0; i < source.arraySize; i++)
                     {
-                        CopySerializedPropertyValue(sourceCopy, targetChild);
+                        CopySerializedPropertyValue(
+                            source.GetArrayElementAtIndex(i),
+                            target.GetArrayElementAtIndex(i));
+                    }
+                }
+                else
+                {
+                    // Struct: iterate only immediate children, recurse for each.
+                    SerializedProperty sourceCopy = source.Copy();
+                    SerializedProperty targetCopy = target.Copy();
+                    int depth = sourceCopy.depth;
+
+                    while (sourceCopy.Next(true) && sourceCopy.depth > depth)
+                    {
+                        // Only process direct children; deeper descendants are handled
+                        // by the recursive call below.
+                        if (sourceCopy.depth != depth + 1)
+                        {
+                            continue;
+                        }
+
+                        SerializedProperty targetChild = targetCopy.FindPropertyRelative(sourceCopy.name);
+                        if (targetChild != null)
+                        {
+                            CopySerializedPropertyValue(sourceCopy, targetChild);
+                        }
                     }
                 }
             }
