@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using UnityEditor;
 using UnityEngine;
@@ -882,7 +884,7 @@ namespace UMAConverter
             }
         }
 
-        private string GetAssetPathSafe(Object asset)
+        private string GetAssetPathSafe(UnityEngine.Object asset)
         {
             if (asset == null)
             {
@@ -1193,6 +1195,19 @@ namespace UMAConverter
             raceData.TPose = GenerateTpose();
             raceData.expressionSet = GenerateExpressionSet();
             raceData.FixupRotations = true;
+            UnityEngine.Object dynamicDnaAsset = GenerateDynamicUmaDnaAsset((this.data as UMAData_Race).name);
+            ScriptableObject dnaConverterController = GenerateDNAConverterController((this.data as UMAData_Race).name, dynamicDnaAsset);
+
+            if (dnaConverterController != null)
+            {
+                TryAssignRaceDnaConverter(raceData, dnaConverterController);
+            }
+
+                UnityEngine.Object dnaRangesAsset = GenerateDNARanges((this.data as UMAData_Race).name, dnaConverterController, dynamicDnaAsset);
+                if (dnaRangesAsset != null)
+                {
+                    TryAssignRaceDnaRanges(raceData, dnaRangesAsset);
+                }
 
             string raceDataPath = workingDirectory + "/Race/" + (this.data as UMAData_Race).name + "_RaceData.asset";
 
@@ -1271,6 +1286,1017 @@ namespace UMAConverter
             AssetDatabase.Refresh();
             return true;
 
+        }
+
+        private UnityEngine.Object GenerateDynamicUmaDnaAsset(string raceName)
+        {
+            string raceFolder = workingDirectory + "/Race";
+            string dnaAssetPath = raceFolder + "/" + raceName + "DynamicUMADna.asset";
+
+            Type dynamicDnaType = FindTypeByName(
+                "UMA.CharacterSystem.DynamicUMADnaAsset",
+                "DynamicUMADnaAsset");
+
+            if (dynamicDnaType == null)
+            {
+                Debug.LogWarning("[UMAConverter] DynamicUMADnaAsset type was not found. Dynamic DNA generation skipped for race '" + raceName + "'.");
+                return null;
+            }
+
+            UnityEngine.Object existing = AssetDatabase.LoadAssetAtPath(dnaAssetPath, dynamicDnaType);
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            UnityEngine.Object referenceAsset = FindBestMatchingDnaAsset(raceName);
+
+            ScriptableObject dynamicDnaAsset = ScriptableObject.CreateInstance(dynamicDnaType);
+            if (dynamicDnaAsset == null)
+            {
+                Debug.LogWarning("[UMAConverter] Failed to instantiate DynamicUMADnaAsset for race '" + raceName + "'.");
+                return null;
+            }
+
+            // Copy serialized defaults from a reference DNA asset when available.
+            if (referenceAsset != null && referenceAsset.GetType() == dynamicDnaType)
+            {
+                EditorUtility.CopySerialized(referenceAsset, dynamicDnaAsset);
+            }
+
+            int dnaNameCount = EnsureDynamicDnaContainsAllTypes(dynamicDnaAsset, referenceAsset);
+
+            dynamicDnaAsset.name = raceName + "DynamicUMADna";
+            AssetDatabase.CreateAsset(dynamicDnaAsset, dnaAssetPath);
+            EditorUtility.SetDirty(dynamicDnaAsset);
+            AssetDatabase.SaveAssetIfDirty(dynamicDnaAsset);
+
+            if (addToGlobalLibrary)
+            {
+                try
+                {
+                    UMAAssetIndexer.Instance.EvilAddAsset(dynamicDnaType, dynamicDnaAsset);
+                }
+                catch (Exception)
+                {
+                    // DynamicUMADnaAsset may not be registered in the asset indexer.
+                }
+            }
+
+            string referencePath = referenceAsset != null ? AssetDatabase.GetAssetPath(referenceAsset) : "<none>";
+            Debug.Log("[UMAConverter] DynamicUMADnaAsset created: path='" + dnaAssetPath + "', reference='" + referencePath + "', dnaTypes=" + dnaNameCount + ".");
+            return dynamicDnaAsset;
+        }
+
+        private int EnsureDynamicDnaContainsAllTypes(ScriptableObject dynamicDnaAsset, UnityEngine.Object referenceAsset)
+        {
+            if (dynamicDnaAsset == null)
+            {
+                return 0;
+            }
+
+            HashSet<string> mergedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            CollectDynamicDnaNames(dynamicDnaAsset, mergedNames);
+            CollectDynamicDnaNames(referenceAsset, mergedNames);
+
+            string[] dnaAssetGuids = AssetDatabase.FindAssets("t:DynamicUMADnaAsset");
+            foreach (string guid in dnaAssetGuids)
+            {
+                string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                UnityEngine.Object asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+                CollectDynamicDnaNames(asset, mergedNames);
+            }
+
+            for (int i = 0; i < defaultDynamicDnaNames.Length; i++)
+            {
+                string dnaName = defaultDynamicDnaNames[i];
+                if (!string.IsNullOrWhiteSpace(dnaName))
+                {
+                    mergedNames.Add(dnaName);
+                }
+            }
+
+            return SetDynamicDnaNames(dynamicDnaAsset, mergedNames);
+        }
+
+        private void CollectDynamicDnaNames(UnityEngine.Object sourceAsset, HashSet<string> destination)
+        {
+            if (sourceAsset == null || destination == null)
+            {
+                return;
+            }
+
+            SerializedObject sourceSO = new SerializedObject(sourceAsset);
+            SerializedProperty namesProperty = sourceSO.FindProperty("Names");
+            if (namesProperty == null || !namesProperty.isArray)
+            {
+                return;
+            }
+
+            for (int i = 0; i < namesProperty.arraySize; i++)
+            {
+                SerializedProperty element = namesProperty.GetArrayElementAtIndex(i);
+                string nameValue = element.stringValue != null ? element.stringValue.Trim() : string.Empty;
+                if (!string.IsNullOrEmpty(nameValue))
+                {
+                    destination.Add(nameValue);
+                }
+            }
+        }
+
+        private int SetDynamicDnaNames(ScriptableObject targetAsset, HashSet<string> names)
+        {
+            if (targetAsset == null || names == null)
+            {
+                return 0;
+            }
+
+            SerializedObject targetSO = new SerializedObject(targetAsset);
+            SerializedProperty namesProperty = targetSO.FindProperty("Names");
+            if (namesProperty == null || !namesProperty.isArray)
+            {
+                return 0;
+            }
+
+            List<string> orderedNames = new List<string>(names);
+            orderedNames.Sort(StringComparer.OrdinalIgnoreCase);
+
+            namesProperty.arraySize = orderedNames.Count;
+            for (int i = 0; i < orderedNames.Count; i++)
+            {
+                namesProperty.GetArrayElementAtIndex(i).stringValue = orderedNames[i];
+            }
+
+            targetSO.ApplyModifiedPropertiesWithoutUndo();
+            return orderedNames.Count;
+        }
+
+        private static readonly string[] defaultDynamicDnaNames = new string[]
+        {
+            "height",
+            "headSize",
+            "headWidth",
+            "neckThickness",
+            "armLength",
+            "forearmLength",
+            "armWidth",
+            "forearmWidth",
+            "handsSize",
+            "feetSize",
+            "legSeparation",
+            "upperMuscle",
+            "lowerMuscle",
+            "upperWeight",
+            "lowerWeight",
+            "legsSize",
+            "belly",
+            "waist",
+            "gluteusSize",
+            "earsSize",
+            "earsPosition",
+            "earsRotation",
+            "noseSize",
+            "noseCurve",
+            "noseWidth",
+            "noseInclination",
+            "nosePosition",
+            "nosePronounced",
+            "noseFlatten",
+            "chinSize",
+            "chinPronounced",
+            "chinPosition",
+            "mandibleSize",
+            "jawsSize",
+            "jawsPosition",
+            "cheekSize",
+            "cheekPosition",
+            "lowCheekPronounced",
+            "lowCheekPosition",
+            "foreheadSize",
+            "foreheadPosition",
+            "lipsSize",
+            "mouthSize",
+            "eyeRotation",
+            "eyeSize",
+            "breastSize",
+            "breastCleavage",
+            "eyeSpacing"
+        };
+
+        private ScriptableObject GenerateDNAConverterController(string raceName, UnityEngine.Object dynamicDnaAsset)
+        {
+            string raceFolder = workingDirectory + "/Race";
+            string controllerPath = raceFolder + "/" + raceName + "DNAConverterController.asset";
+
+            Type controllerType = FindTypeByName(
+                "UMA.CharacterSystem.DynamicDNAConverterController",
+                "DynamicDNAConverterController");
+
+            if (controllerType == null)
+            {
+                Debug.LogWarning("[UMAConverter] DynamicDNAConverterController type was not found. DNA converter controller generation skipped for race '" + raceName + "'.");
+                return null;
+            }
+
+            ScriptableObject existing = AssetDatabase.LoadAssetAtPath(controllerPath, controllerType) as ScriptableObject;
+            if (existing != null)
+            {
+                TryAssignDnaAssetToController(existing, dynamicDnaAsset, raceName);
+                return existing;
+            }
+
+            ScriptableObject controller = ScriptableObject.CreateInstance(controllerType);
+            if (controller == null)
+            {
+                Debug.LogWarning("[UMAConverter] Failed to instantiate DynamicDNAConverterController for race '" + raceName + "'.");
+                return null;
+            }
+
+            ScriptableObject referenceController = FindReferenceDnaConverterController(controllerType);
+            if (referenceController != null)
+            {
+                Debug.Log("[UMAConverter] GenerateDNAConverterController: Found reference controller, copying serialized data...");
+                EditorUtility.CopySerialized(referenceController, controller);
+                Debug.Log("[UMAConverter] GenerateDNAConverterController: Serialized data copied from reference controller.");
+            }
+            else
+            {
+                Debug.Log("[UMAConverter] GenerateDNAConverterController: No reference controller found, will use default setup.");
+            }
+
+            controller.name = raceName + "DNAConverterController";
+            AssetDatabase.CreateAsset(controller, controllerPath);
+
+            List<ScriptableObject> plugins = CloneControllerPluginsFromReference(controller, referenceController);
+            if (plugins.Count > 0)
+            {
+                Debug.Log("[UMAConverter] Cloned " + plugins.Count + " plugins from reference controller.");
+            }
+            else
+            {
+                Debug.Log("[UMAConverter] Creating default empty plugins (no reference template found).");
+                Type skeletonPluginType = FindTypeByName(
+                    "UMA.CharacterSystem.SkeletonDNAConverterPlugin",
+                    "SkeletonDNAConverterPlugin");
+
+                Type bonePosePluginType = FindTypeByName(
+                    "UMA.PoseTools.BonePoseDNAConverterPlugin",
+                    "BonePoseDNAConverterPlugin");
+
+                ScriptableObject skeletonPlugin = CreateControllerPluginAsset(controller, skeletonPluginType, "SkeletonDNAConverters");
+                if (skeletonPlugin != null)
+                {
+                    plugins.Add(skeletonPlugin);
+                    Debug.Log("[UMAConverter] Created empty SkeletonDNAConverters plugin.");
+                }
+
+                ScriptableObject bonePosePlugin = CreateControllerPluginAsset(controller, bonePosePluginType, "BonePoseDNAConverters");
+                if (bonePosePlugin != null)
+                {
+                    plugins.Add(bonePosePlugin);
+                    Debug.Log("[UMAConverter] Created empty BonePoseDNAConverters plugin.");
+                }
+            }
+
+            SerializedObject controllerSO = new SerializedObject(controller);
+
+            SerializedProperty pluginsProperty = controllerSO.FindProperty("_plugins");
+            if (pluginsProperty != null && pluginsProperty.isArray)
+            {
+                pluginsProperty.arraySize = plugins.Count;
+                for (int i = 0; i < plugins.Count; i++)
+                {
+                    pluginsProperty.GetArrayElementAtIndex(i).objectReferenceValue = plugins[i];
+                }
+            }
+
+            UnityEngine.Object assignedDnaAsset = dynamicDnaAsset != null ? dynamicDnaAsset : FindBestMatchingDnaAsset(raceName);
+            if (!TryAssignDnaAssetToController(controller, assignedDnaAsset, raceName))
+            {
+                Debug.LogWarning("[UMAConverter] Dynamic DNA asset could not be assigned to generated DNAConverterController for race '" + raceName + "'.");
+            }
+
+            controllerSO.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssetIfDirty(controller);
+
+            Debug.Log("[UMAConverter] DNAConverterController created: path='" + controllerPath + "', plugins=" + plugins.Count + ".");
+
+            return controller;
+        }
+
+        private bool TryAssignDnaAssetToController(ScriptableObject controller, UnityEngine.Object dnaAsset, string raceName)
+        {
+            if (controller == null)
+            {
+                return false;
+            }
+
+            SerializedObject controllerSO = new SerializedObject(controller);
+            SerializedProperty dnaAssetProperty = controllerSO.FindProperty("_dnaAsset");
+            if (dnaAssetProperty == null)
+            {
+                return false;
+            }
+
+            if (dnaAsset == null)
+            {
+                dnaAsset = FindBestMatchingDnaAsset(raceName);
+            }
+
+            if (dnaAsset == null)
+            {
+                return false;
+            }
+
+            dnaAssetProperty.objectReferenceValue = dnaAsset;
+            controllerSO.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssetIfDirty(controller);
+            return true;
+        }
+
+        private ScriptableObject CreateControllerPluginAsset(ScriptableObject controller, Type pluginType, string pluginName)
+        {
+            if (controller == null || pluginType == null)
+            {
+                return null;
+            }
+
+            ScriptableObject plugin = ScriptableObject.CreateInstance(pluginType);
+            if (plugin == null)
+            {
+                return null;
+            }
+
+            plugin.name = pluginName;
+            AssetDatabase.AddObjectToAsset(plugin, controller);
+
+            SerializedObject pluginSO = new SerializedObject(plugin);
+            SerializedProperty converterControllerProperty = pluginSO.FindProperty("_converterController");
+            if (converterControllerProperty != null)
+            {
+                converterControllerProperty.objectReferenceValue = controller;
+                pluginSO.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            EditorUtility.SetDirty(plugin);
+            return plugin;
+        }
+
+        private ScriptableObject FindReferenceDnaConverterController(Type controllerType)
+        {
+            if (controllerType == null)
+            {
+                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: controllerType is null.");
+                return null;
+            }
+
+            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Looking for reference controller of type '" + controllerType.Name + "'.");
+
+            ScriptableObject configuredReference = UMAConverterSettings.Instance.ReferenceDnaConverterController;
+            if (configuredReference != null)
+            {
+                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Found configured reference: '" + configuredReference.name + "' (type: " + configuredReference.GetType().Name + ")");
+                if (controllerType.IsInstanceOfType(configuredReference))
+                {
+                    Debug.Log("[UMAConverter] Using configured Reference DNA Converter Controller: " + AssetDatabase.GetAssetPath(configuredReference));
+                    return configuredReference;
+                }
+
+                Debug.LogWarning("[UMAConverter] UMAConverterSettings Reference DNA Converter Controller is set but has an incompatible type. Falling back to auto-detection.");
+            }
+            else
+            {
+                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: No configured reference in settings. Auto-detecting...");
+            }
+
+            string[] controllerGuids = AssetDatabase.FindAssets("t:" + controllerType.Name);
+            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Auto-search found " + controllerGuids.Length + " assets of type '" + controllerType.Name + "'.");
+            
+            foreach (string guid in controllerGuids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                ScriptableObject asset = AssetDatabase.LoadMainAssetAtPath(path) as ScriptableObject;
+                if (asset != null && controllerType.IsInstanceOfType(asset))
+                {
+                    Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Candidate: " + asset.name + " at " + path);
+                    if (asset.name.IndexOf("HumanFemale", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        Debug.Log("[UMAConverter] Auto-detected Reference DNA Converter Controller (HumanFemale): " + path);
+                        return asset;
+                    }
+                }
+            }
+
+            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: No HumanFemale reference found. Will use default plugin generation.");
+            return null;
+        }
+
+        private List<ScriptableObject> CloneControllerPluginsFromReference(ScriptableObject targetController, ScriptableObject referenceController)
+        {
+            List<ScriptableObject> clonedPlugins = new List<ScriptableObject>();
+            if (targetController == null || referenceController == null)
+            {
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: targetController or referenceController is null. No plugins cloned.");
+                return clonedPlugins;
+            }
+
+            SerializedObject referenceSO = new SerializedObject(referenceController);
+            SerializedProperty referencePluginsProperty = referenceSO.FindProperty("_plugins");
+            if (referencePluginsProperty == null || !referencePluginsProperty.isArray)
+            {
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Reference controller has no _plugins array.");
+                return clonedPlugins;
+            }
+
+            Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Found " + referencePluginsProperty.arraySize + " plugins in reference controller.");
+
+            for (int i = 0; i < referencePluginsProperty.arraySize; i++)
+            {
+                SerializedProperty pluginProperty = referencePluginsProperty.GetArrayElementAtIndex(i);
+                ScriptableObject sourcePlugin = pluginProperty.objectReferenceValue as ScriptableObject;
+                if (sourcePlugin == null)
+                {
+                    Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Plugin at index " + i + " is null. Skipping.");
+                    continue;
+                }
+
+                Type sourcePluginType = sourcePlugin.GetType();
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Cloning plugin '" + sourcePlugin.name + "' of type '" + sourcePluginType.Name + "'.");
+
+                ScriptableObject clonedPlugin = ScriptableObject.CreateInstance(sourcePluginType);
+                if (clonedPlugin == null)
+                {
+                    Debug.LogWarning("[UMAConverter] CloneControllerPluginsFromReference: Failed to instantiate plugin type '" + sourcePluginType.Name + "'.");
+                    continue;
+                }
+
+                clonedPlugin.name = sourcePlugin.name;
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Created new plugin instance, copying serialized data...");
+                
+                EditorUtility.CopySerialized(sourcePlugin, clonedPlugin);
+                
+                AssetDatabase.AddObjectToAsset(clonedPlugin, targetController);
+
+                SerializedObject sourcePluginSO = new SerializedObject(sourcePlugin);
+                SerializedObject clonedPluginSO = new SerializedObject(clonedPlugin);
+                
+                CopyNestedArrayProperties(sourcePluginSO, clonedPluginSO);
+                
+                SerializedProperty converterControllerProperty = clonedPluginSO.FindProperty("_converterController");
+                if (converterControllerProperty != null)
+                {
+                    converterControllerProperty.objectReferenceValue = targetController;
+                }
+
+                clonedPluginSO.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(clonedPlugin);
+                
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Copied nested arrays from source plugin.");
+                
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Successfully cloned plugin '" + clonedPlugin.name + "' and added to target controller.");
+                clonedPlugins.Add(clonedPlugin);
+            }
+
+            return clonedPlugins;
+        }
+
+        private void CopyNestedArrayProperties(SerializedObject sourceObject, SerializedObject targetObject)
+        {
+            if (sourceObject == null || targetObject == null)
+            {
+                return;
+            }
+
+            string[] criticalArrayProperties = new string[] { "_skeletonModifiers", "_poseDNAConverters", "_modifyingDNA", "_dnaEvaluators" };
+
+            foreach (string arrayPropName in criticalArrayProperties)
+            {
+                SerializedProperty sourceProp = sourceObject.FindProperty(arrayPropName);
+                SerializedProperty targetProp = targetObject.FindProperty(arrayPropName);
+
+                if (sourceProp == null || targetProp == null)
+                {
+                    continue;
+                }
+
+                if (!sourceProp.isArray || !targetProp.isArray)
+                {
+                    continue;
+                }
+
+                Debug.Log("[UMAConverter] CopyNestedArrayProperties: Copying array '" + arrayPropName + "' with " + sourceProp.arraySize + " elements.");
+
+                targetProp.arraySize = sourceProp.arraySize;
+
+                for (int i = 0; i < sourceProp.arraySize; i++)
+                {
+                    SerializedProperty sourceElement = sourceProp.GetArrayElementAtIndex(i);
+                    SerializedProperty targetElement = targetProp.GetArrayElementAtIndex(i);
+
+                    CopySerializedPropertyValue(sourceElement, targetElement);
+                }
+            }
+
+            targetObject.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private UnityEngine.Object GenerateDNARanges(string raceName, ScriptableObject dnaConverterController, UnityEngine.Object dynamicDnaAsset)
+        {
+            string raceFolder = workingDirectory + "/Race";
+            string dnaRangesPath = raceFolder + "/" + raceName + "DNARange.asset";
+
+            Type dnaRangesType = FindTypeByName(
+                "UMA.DNARangeAsset",
+                "DNARangeAsset");
+
+            if (dnaRangesType == null)
+            {
+                Debug.LogWarning("[UMAConverter] DNARangeAsset type was not found. DNA ranges generation skipped for race '" + raceName + "'.");
+                return null;
+            }
+
+            UnityEngine.Object existing = AssetDatabase.LoadAssetAtPath(dnaRangesPath, dnaRangesType);
+            if (existing != null)
+            {
+                TryAssignDnaConverterToRanges(existing, dnaConverterController);
+                Debug.Log("[UMAConverter] DNA ranges already exists at '" + dnaRangesPath + "'. Reusing existing asset.");
+                return existing;
+            }
+
+            UnityEngine.Object referenceRanges = FindBestMatchingDnaRanges(raceName);
+
+            ScriptableObject dnaRanges = ScriptableObject.CreateInstance(dnaRangesType);
+            if (dnaRanges == null)
+            {
+                Debug.LogWarning("[UMAConverter] Failed to instantiate DNARangeAsset for race '" + raceName + "'.");
+                return null;
+            }
+
+            // Copy serialized defaults from a reference DNA ranges when available.
+            if (referenceRanges != null && referenceRanges.GetType() == dnaRangesType)
+            {
+                EditorUtility.CopySerialized(referenceRanges, dnaRanges);
+                Debug.Log("[UMAConverter] GenerateDNARanges: Copied serialized data from reference ranges.");
+            }
+            else
+            {
+                // Initialize default ranges arrays based on DNA asset size
+                InitializeDefaultDNARanges(dnaRanges, dynamicDnaAsset);
+            }
+
+            TryAssignDnaConverterToRanges(dnaRanges, dnaConverterController);
+
+            dnaRanges.name = raceName + "DNARange";
+            AssetDatabase.CreateAsset(dnaRanges, dnaRangesPath);
+            EditorUtility.SetDirty(dnaRanges);
+            AssetDatabase.SaveAssetIfDirty(dnaRanges);
+
+            if (addToGlobalLibrary)
+            {
+                try
+                {
+                    UMAAssetIndexer.Instance.EvilAddAsset(dnaRangesType, dnaRanges);
+                }
+                catch (Exception)
+                {
+                    // DNARangeAsset may not be registered in the asset indexer.
+                }
+            }
+
+            string referencePath = referenceRanges != null ? AssetDatabase.GetAssetPath(referenceRanges) : "<none>";
+            Debug.Log("[UMAConverter] DNARangeAsset created: path='" + dnaRangesPath + "', reference='" + referencePath + "'.");
+            return dnaRanges;
+        }
+
+        private bool TryAssignDnaConverterToRanges(UnityEngine.Object dnaRangesAsset, ScriptableObject dnaConverterController)
+        {
+            if (dnaRangesAsset == null || dnaConverterController == null)
+            {
+                return false;
+            }
+
+            SerializedObject rangesSO = new SerializedObject(dnaRangesAsset);
+            SerializedProperty dnaConverterProp = rangesSO.FindProperty("_dnaConverter");
+            if (dnaConverterProp == null)
+            {
+                return false;
+            }
+
+            SerializedProperty converterProp = dnaConverterProp.FindPropertyRelative("_converter");
+            if (converterProp == null)
+            {
+                return false;
+            }
+
+            converterProp.objectReferenceValue = dnaConverterController;
+            rangesSO.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(dnaRangesAsset);
+            Debug.Log("[UMAConverter] GenerateDNARanges: Assigned DNA converter controller reference.");
+            return true;
+        }
+
+        private void InitializeDefaultDNARanges(ScriptableObject dnaRanges, UnityEngine.Object dynamicDnaAsset)
+        {
+            SerializedObject rangesSO = new SerializedObject(dnaRanges);
+            SerializedProperty meansProp = rangesSO.FindProperty("means");
+            SerializedProperty deviationsProp = rangesSO.FindProperty("deviations");
+            SerializedProperty spreadsProp = rangesSO.FindProperty("spreads");
+
+            if (dynamicDnaAsset != null)
+            {
+                SerializedObject dnaSO = new SerializedObject(dynamicDnaAsset);
+                SerializedProperty dnaNamesProp = dnaSO.FindProperty("Names");
+                
+                int dnaCount = dnaNamesProp != null ? dnaNamesProp.arraySize : 48;
+                Debug.Log("[UMAConverter] InitializeDefaultDNARanges: Initializing arrays with " + dnaCount + " DNA types.");
+
+                if (meansProp != null && meansProp.isArray)
+                {
+                    meansProp.arraySize = dnaCount;
+                    for (int i = 0; i < dnaCount; i++)
+                    {
+                        meansProp.GetArrayElementAtIndex(i).floatValue = 0.5f;
+                    }
+                }
+
+                if (deviationsProp != null && deviationsProp.isArray)
+                {
+                    deviationsProp.arraySize = dnaCount;
+                    for (int i = 0; i < dnaCount; i++)
+                    {
+                        deviationsProp.GetArrayElementAtIndex(i).floatValue = 0.05f;
+                    }
+                }
+
+                if (spreadsProp != null && spreadsProp.isArray)
+                {
+                    spreadsProp.arraySize = dnaCount;
+                    for (int i = 0; i < dnaCount; i++)
+                    {
+                        spreadsProp.GetArrayElementAtIndex(i).floatValue = 0.15f;
+                    }
+                }
+            }
+            else
+            {
+                // Fallback: create arrays with default 48 DNA types
+                if (meansProp != null && meansProp.isArray)
+                {
+                    meansProp.arraySize = 48;
+                    for (int i = 0; i < 48; i++)
+                    {
+                        meansProp.GetArrayElementAtIndex(i).floatValue = 0.5f;
+                    }
+                }
+                if (deviationsProp != null && deviationsProp.isArray)
+                {
+                    deviationsProp.arraySize = 48;
+                    for (int i = 0; i < 48; i++)
+                    {
+                        deviationsProp.GetArrayElementAtIndex(i).floatValue = 0.05f;
+                    }
+                }
+                if (spreadsProp != null && spreadsProp.isArray)
+                {
+                    spreadsProp.arraySize = 48;
+                    for (int i = 0; i < 48; i++)
+                    {
+                        spreadsProp.GetArrayElementAtIndex(i).floatValue = 0.15f;
+                    }
+                }
+            }
+
+            rangesSO.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private UnityEngine.Object FindBestMatchingDnaRanges(string raceName)
+        {
+            Type dnaRangesType = FindTypeByName(
+                "UMA.DNARangeAsset",
+                "DNARangeAsset");
+
+            if (dnaRangesType == null)
+            {
+                return null;
+            }
+
+            ScriptableObject configuredReference = UMAConverterSettings.Instance.ReferenceDynamicDnaRanges;
+            if (configuredReference != null && configuredReference.GetType() == dnaRangesType)
+            {
+                Debug.Log("[UMAConverter] FindBestMatchingDnaRanges: Using configured reference DNA ranges.");
+                return configuredReference;
+            }
+
+            string[] dnaRangesGuids = AssetDatabase.FindAssets("t:" + dnaRangesType.Name);
+            if (dnaRangesGuids.Length > 0)
+            {
+                // Prioritize HumanFemale
+                foreach (string guid in dnaRangesGuids)
+                {
+                    string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                    if (assetPath.Contains("HumanFemale") || assetPath.Contains("humanfemale"))
+                    {
+                        UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath(assetPath, dnaRangesType);
+                        Debug.Log("[UMAConverter] FindBestMatchingDnaRanges: Auto-detected reference: " + assetPath);
+                        return asset;
+                    }
+                }
+
+                // Fall back to first found
+                string firstPath = AssetDatabase.GUIDToAssetPath(dnaRangesGuids[0]);
+                UnityEngine.Object firstAsset = AssetDatabase.LoadAssetAtPath(firstPath, dnaRangesType);
+                Debug.Log("[UMAConverter] FindBestMatchingDnaRanges: Auto-detected reference: " + firstPath);
+                return firstAsset;
+            }
+
+            Debug.Log("[UMAConverter] FindBestMatchingDnaRanges: No reference DNA ranges found.");
+            return null;
+        }
+
+        private void CopySerializedPropertyValue(SerializedProperty source, SerializedProperty target)
+        {
+            if (source == null || target == null)
+            {
+                return;
+            }
+
+            if (source.propertyType == SerializedPropertyType.Generic)
+            {
+                SerializedProperty sourceCopy = source.Copy();
+                SerializedProperty targetCopy = target.Copy();
+                int depth = sourceCopy.depth;
+                
+                while (sourceCopy.Next(true) && sourceCopy.depth > depth)
+                {
+                    SerializedProperty targetChild = targetCopy.FindPropertyRelative(sourceCopy.name);
+                    if (targetChild != null)
+                    {
+                        CopySerializedPropertyValue(sourceCopy, targetChild);
+                    }
+                }
+            }
+            else
+            {
+                switch (source.propertyType)
+                {
+                    case SerializedPropertyType.Integer:
+                        target.intValue = source.intValue;
+                        break;
+                    case SerializedPropertyType.Boolean:
+                        target.boolValue = source.boolValue;
+                        break;
+                    case SerializedPropertyType.Float:
+                        target.floatValue = source.floatValue;
+                        break;
+                    case SerializedPropertyType.String:
+                        target.stringValue = source.stringValue;
+                        break;
+                    case SerializedPropertyType.Color:
+                        target.colorValue = source.colorValue;
+                        break;
+                    case SerializedPropertyType.ObjectReference:
+                        target.objectReferenceValue = source.objectReferenceValue;
+                        break;
+                    case SerializedPropertyType.Enum:
+                        target.enumValueIndex = source.enumValueIndex;
+                        break;
+                    case SerializedPropertyType.Vector2:
+                        target.vector2Value = source.vector2Value;
+                        break;
+                    case SerializedPropertyType.Vector3:
+                        target.vector3Value = source.vector3Value;
+                        break;
+                    case SerializedPropertyType.Vector4:
+                        target.vector4Value = source.vector4Value;
+                        break;
+                    case SerializedPropertyType.Rect:
+                        target.rectValue = source.rectValue;
+                        break;
+                    case SerializedPropertyType.ArraySize:
+                        target.arraySize = source.arraySize;
+                        break;
+                    case SerializedPropertyType.Character:
+                        target.intValue = source.intValue;
+                        break;
+                    case SerializedPropertyType.AnimationCurve:
+                        target.animationCurveValue = source.animationCurveValue;
+                        break;
+                    case SerializedPropertyType.Bounds:
+                        target.boundsValue = source.boundsValue;
+                        break;
+                    case SerializedPropertyType.Gradient:
+                        target.gradientValue = source.gradientValue;
+                        break;
+                }
+            }
+        }
+
+        private UnityEngine.Object FindBestMatchingDnaAsset(string raceName)
+        {
+            Type dynamicDnaType = FindTypeByName(
+                "UMA.CharacterSystem.DynamicUMADnaAsset",
+                "DynamicUMADnaAsset");
+
+            if (dynamicDnaType != null)
+            {
+                ScriptableObject configuredReference = UMAConverterSettings.Instance.ReferenceDynamicDnaAsset;
+                if (configuredReference != null)
+                {
+                    if (dynamicDnaType.IsInstanceOfType(configuredReference))
+                    {
+                        return configuredReference;
+                    }
+
+                    Debug.LogWarning("[UMAConverter] UMAConverterSettings Reference Dynamic DNA is set but is not a DynamicUMADnaAsset. Falling back to auto-detection.");
+                }
+            }
+
+            string[] dnaAssetGuids = AssetDatabase.FindAssets("t:DynamicUMADnaAsset");
+            UnityEngine.Object fallback = null;
+
+            foreach (string guid in dnaAssetGuids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                UnityEngine.Object asset = AssetDatabase.LoadMainAssetAtPath(path);
+                if (asset == null)
+                {
+                    continue;
+                }
+
+                if (fallback == null)
+                {
+                    fallback = asset;
+                }
+
+                if (!string.IsNullOrEmpty(raceName) && asset.name.IndexOf(raceName, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return asset;
+                }
+            }
+
+            return fallback;
+        }
+
+        private bool TryAssignRaceDnaConverter(RaceData raceData, ScriptableObject controller)
+        {
+            if (raceData == null || controller == null)
+            {
+                return false;
+            }
+
+            SerializedObject raceDataSO = new SerializedObject(raceData);
+            string[] candidateProperties = new string[]
+            {
+                "dnaConverterList",
+                "_dnaConverterList",
+                "dnaConverters",
+                "_dnaConverters"
+            };
+
+            for (int propertyIndex = 0; propertyIndex < candidateProperties.Length; propertyIndex++)
+            {
+                SerializedProperty property = raceDataSO.FindProperty(candidateProperties[propertyIndex]);
+                if (property == null || !property.isArray)
+                {
+                    continue;
+                }
+
+                bool alreadyAssigned = false;
+                for (int i = 0; i < property.arraySize; i++)
+                {
+                    SerializedProperty element = property.GetArrayElementAtIndex(i);
+                    if (element.objectReferenceValue == controller)
+                    {
+                        alreadyAssigned = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyAssigned)
+                {
+                    int index = property.arraySize;
+                    property.arraySize = index + 1;
+                    property.GetArrayElementAtIndex(index).objectReferenceValue = controller;
+                }
+
+                raceDataSO.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(raceData);
+                return true;
+            }
+
+            Debug.LogWarning("[UMAConverter] Could not assign DNA converter controller to RaceData. No compatible serialized converter-list field was found.");
+            return false;
+        }
+
+        private bool TryAssignRaceDnaRanges(RaceData raceData, UnityEngine.Object dnaRangeAsset)
+        {
+            if (raceData == null || dnaRangeAsset == null)
+            {
+                return false;
+            }
+
+            SerializedObject raceDataSO = new SerializedObject(raceData);
+            SerializedProperty dnaRangesProperty = raceDataSO.FindProperty("dnaRanges");
+            if (dnaRangesProperty == null || !dnaRangesProperty.isArray)
+            {
+                Debug.LogWarning("[UMAConverter] Could not assign DNA ranges to RaceData. No compatible serialized dnaRanges field was found.");
+                return false;
+            }
+
+            bool alreadyAssigned = false;
+            for (int i = 0; i < dnaRangesProperty.arraySize; i++)
+            {
+                SerializedProperty element = dnaRangesProperty.GetArrayElementAtIndex(i);
+                if (element.objectReferenceValue == dnaRangeAsset)
+                {
+                    alreadyAssigned = true;
+                    break;
+                }
+            }
+
+            if (!alreadyAssigned)
+            {
+                int index = dnaRangesProperty.arraySize;
+                dnaRangesProperty.arraySize = index + 1;
+                dnaRangesProperty.GetArrayElementAtIndex(index).objectReferenceValue = dnaRangeAsset;
+            }
+
+            raceDataSO.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(raceData);
+            return true;
+        }
+
+        private static Type FindTypeByName(params string[] typeNames)
+        {
+            if (typeNames == null || typeNames.Length == 0)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < typeNames.Length; i++)
+            {
+                string typeName = typeNames[i];
+                if (string.IsNullOrEmpty(typeName))
+                {
+                    continue;
+                }
+
+                Type foundType = Type.GetType(typeName);
+                if (foundType != null)
+                {
+                    return foundType;
+                }
+
+                Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+                for (int assemblyIndex = 0; assemblyIndex < assemblies.Length; assemblyIndex++)
+                {
+                    Assembly assembly = assemblies[assemblyIndex];
+                    if (assembly == null)
+                    {
+                        continue;
+                    }
+
+                    foundType = assembly.GetType(typeName);
+                    if (foundType != null)
+                    {
+                        return foundType;
+                    }
+
+                    Type[] assemblyTypes;
+                    try
+                    {
+                        assemblyTypes = assembly.GetTypes();
+                    }
+                    catch (ReflectionTypeLoadException ex)
+                    {
+                        assemblyTypes = ex.Types;
+                    }
+
+                    if (assemblyTypes == null)
+                    {
+                        continue;
+                    }
+
+                    for (int typeIndex = 0; typeIndex < assemblyTypes.Length; typeIndex++)
+                    {
+                        Type assemblyType = assemblyTypes[typeIndex];
+                        if (assemblyType == null)
+                        {
+                            continue;
+                        }
+
+                        if (string.Equals(assemblyType.Name, typeName, StringComparison.Ordinal) || string.Equals(assemblyType.FullName, typeName, StringComparison.Ordinal))
+                        {
+                            return assemblyType;
+                        }
+                    }
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
