@@ -7,6 +7,7 @@ using Newtonsoft.Json;
 using UMA;
 using UMA.Editors;
 using UMA.CharacterSystem;
+using UMA.PoseTools;
 using UMAConverter;
 using UMAConverter.Editor.Transparency;
 
@@ -95,6 +96,7 @@ namespace UMAConverter
             {
                 if (!Directory.Exists(folderPath + "/TPose")) Directory.CreateDirectory(folderPath + "/TPose");
                 if (!Directory.Exists(folderPath + "/Race")) Directory.CreateDirectory(folderPath + "/Race");
+                if (!Directory.Exists(folderPath + "/Expressions")) Directory.CreateDirectory(folderPath + "/Expressions");
             }
             workingDirectory = folderPath;
 
@@ -1189,6 +1191,7 @@ namespace UMAConverter
             RaceData raceData = ScriptableObject.CreateInstance<RaceData>();
             raceData.raceName = (this.data as UMAData_Race).name;
             raceData.TPose = GenerateTpose();
+            raceData.expressionSet = GenerateExpressionSet();
             raceData.FixupRotations = true;
 
             string raceDataPath = workingDirectory + "/Race/" + (this.data as UMAData_Race).name + "_RaceData.asset";
@@ -1268,6 +1271,150 @@ namespace UMAConverter
             AssetDatabase.Refresh();
             return true;
 
+        }
+
+        /// <summary>
+        // Maps each ExpressionPlayer channel name to the HumanBodyBones that drive it.
+        private static readonly Dictionary<string, HumanBodyBones[]> poseChannelBones = new Dictionary<string, HumanBodyBones[]>
+        {
+            { "neckUp_Down",          new[] { HumanBodyBones.Neck } },
+            { "neckLeft_Right",       new[] { HumanBodyBones.Neck } },
+            { "neckTiltLeft_Right",   new[] { HumanBodyBones.Neck } },
+            { "headUp_Down",          new[] { HumanBodyBones.Head } },
+            { "headLeft_Right",       new[] { HumanBodyBones.Head } },
+            { "headTiltLeft_Right",   new[] { HumanBodyBones.Head } },
+            { "jawOpen_Close",        new[] { HumanBodyBones.Jaw } },
+            { "jawForward_Back",      new[] { HumanBodyBones.Jaw } },
+            { "jawLeft_Right",        new[] { HumanBodyBones.Jaw } },
+            { "leftEyeOpen_Close",    new[] { HumanBodyBones.LeftEye } },
+            { "leftEyeUp_Down",       new[] { HumanBodyBones.LeftEye } },
+            { "leftEyeIn_Out",        new[] { HumanBodyBones.LeftEye } },
+            { "rightEyeOpen_Close",   new[] { HumanBodyBones.RightEye } },
+            { "rightEyeUp_Down",      new[] { HumanBodyBones.RightEye } },
+            { "rightEyeIn_Out",       new[] { HumanBodyBones.RightEye } },
+            { "leftGrasp",            new[] { HumanBodyBones.LeftIndexProximal, HumanBodyBones.LeftMiddleProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
+            { "rightGrasp",           new[] { HumanBodyBones.RightIndexProximal, HumanBodyBones.RightMiddleProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
+            { "leftPeace",            new[] { HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
+            { "rightPeace",           new[] { HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
+            { "leftPoint",            new[] { HumanBodyBones.LeftMiddleProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
+            { "rightPoint",           new[] { HumanBodyBones.RightMiddleProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
+            { "leftRude",             new[] { HumanBodyBones.LeftIndexProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
+            { "rightRude",            new[] { HumanBodyBones.RightIndexProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
+        };
+
+        /// <summary>
+        /// Returns the actual rig bone name for a given HumanBodyBones value using the mesh's humanDescription.
+        /// Returns null if the bone is not mapped.
+        /// </summary>
+        private string GetBoneNameForHumanBone(HumanBodyBones humanBone)
+        {
+            ModelImporter importer = AssetImporter.GetAtPath(meshPath) as ModelImporter;
+            if (importer == null) return null;
+            string humanBoneName = HumanTrait.BoneName[(int)humanBone];
+            foreach (HumanBone hb in importer.humanDescription.human)
+            {
+                if (string.Equals(hb.humanName, humanBoneName, System.StringComparison.Ordinal))
+                    return hb.boneName;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Populates a UMABonePose with identity-delta PoseBones for each humanoid bone that drives
+        /// the given expression channel. The delta values (zero position, identity rotation, scale 1)
+        /// mean "no change from rest pose" and can be adjusted in the Inspector.
+        /// </summary>
+        private void PopulateBonePose(UMABonePose bonePose, string channelName)
+        {
+            HumanBodyBones[] humanBones;
+            if (!poseChannelBones.TryGetValue(channelName, out humanBones)) return;
+
+            List<UMABonePose.PoseBone> poseBones = new List<UMABonePose.PoseBone>();
+            foreach (HumanBodyBones humanBone in humanBones)
+            {
+                string boneName = GetBoneNameForHumanBone(humanBone);
+                if (string.IsNullOrEmpty(boneName)) continue;
+
+                UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
+                poseBone.bone = boneName;
+                poseBone.hash = UMAUtils.StringToHash(boneName);
+                poseBone.position = Vector3.zero;
+                poseBone.rotation = Quaternion.identity;
+                poseBone.scale = Vector3.one;
+                poseBone.category = channelName;
+                poseBones.Add(poseBone);
+            }
+
+            bonePose.poses = poseBones.ToArray();
+        }
+
+        /// <summary>
+        /// Generates a UMAExpressionSet for the Race along with an empty UMABonePose asset for every
+        /// expression channel (primary and inverse). The pose assets are saved to the Expressions folder
+        /// and linked into the matching posePairs slot so the set is immediately usable. Bone data can then
+        /// be added to each pose asset by hand or via a pose-capture workflow.
+        /// </summary>
+        /// <returns>The created UMAExpressionSet asset.</returns>
+        /// <exception cref="System.Exception">Thrown if called for a non-race type.</exception>
+        public UMAExpressionSet GenerateExpressionSet()
+        {
+            if (this.data.type != UMADataType.race) throw new System.Exception("GenerateExpressionSet can only be called for Race creation");
+
+            string expressionsFolder = workingDirectory + "/Expressions";
+            string posesFolder = expressionsFolder + "/Poses";
+            if (!Directory.Exists(posesFolder)) Directory.CreateDirectory(posesFolder);
+            AssetDatabase.Refresh();
+
+            string raceName = (this.data as UMAData_Race).name;
+            string expressionSetPath = expressionsFolder + "/" + raceName + "_ExpressionSet.asset";
+
+            UMAExpressionSet expressionSet = ScriptableObject.CreateInstance<UMAExpressionSet>();
+            expressionSet.posePairs = new UMAExpressionSet.PosePair[ExpressionPlayer.PoseCount];
+
+            // Create the expression set asset first so sub-assets can reference it.
+            AssetDatabase.CreateAsset(expressionSet, expressionSetPath);
+
+            for (int i = 0; i < ExpressionPlayer.PoseCount; i++)
+            {
+                string channelName = ExpressionPlayer.PoseNames[i];
+
+                UMABonePose primaryPose = ScriptableObject.CreateInstance<UMABonePose>();
+                primaryPose.name = raceName + "_" + channelName + "_primary";
+                primaryPose.poses = new UMABonePose.PoseBone[0];
+                PopulateBonePose(primaryPose, channelName);
+                string primaryPath = posesFolder + "/" + primaryPose.name + ".asset";
+                AssetDatabase.CreateAsset(primaryPose, primaryPath);
+
+                UMABonePose inversePose = ScriptableObject.CreateInstance<UMABonePose>();
+                inversePose.name = raceName + "_" + channelName + "_inverse";
+                inversePose.poses = new UMABonePose.PoseBone[0];
+                PopulateBonePose(inversePose, channelName);
+                string inversePath = posesFolder + "/" + inversePose.name + ".asset";
+                AssetDatabase.CreateAsset(inversePose, inversePath);
+
+                UMAExpressionSet.PosePair pair = new UMAExpressionSet.PosePair();
+                pair.primary = primaryPose;
+                pair.inverse = inversePose;
+                expressionSet.posePairs[i] = pair;
+            }
+
+            EditorUtility.SetDirty(expressionSet);
+            AssetDatabase.SaveAssets();
+
+            if (addToGlobalLibrary)
+            {
+                try
+                {
+                    UMAAssetIndexer.Instance.EvilAddAsset(typeof(UMAExpressionSet), expressionSet);
+                }
+                catch (System.Exception)
+                {
+                    // UMAExpressionSet is not registered in the asset indexer — skip silently.
+                }
+            }
+
+            Debug.Log("[UMAConverter] ExpressionSet created: path='" + expressionSetPath + "', posePairs=" + expressionSet.posePairs.Length + " (each with primary+inverse UMABonePose)");
+            return expressionSet;
         }
 
         /// <summary>
