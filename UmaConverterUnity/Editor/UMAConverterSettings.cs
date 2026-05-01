@@ -12,6 +12,13 @@ namespace UMAConverter
         public UMAMaterial defaultMaterial = null;
         [SerializeField]
         private UMAMaterial transparentMaterial;
+        [Header("DNA")]
+        [SerializeField]
+        private ScriptableObject referenceDynamicDnaAsset;
+        [SerializeField]
+        private ScriptableObject referenceDnaConverterController;
+        [SerializeField]
+        private ScriptableObject referenceDynamicDnaRanges;
         public bool removeMeshAfterCreating = false;
 
 #if UMAConverterGCInventory
@@ -55,6 +62,24 @@ namespace UMAConverter
                 }
                 return transparentMaterial;
             }
+        }
+
+        public ScriptableObject ReferenceDynamicDnaAsset
+        {
+            get { return referenceDynamicDnaAsset; }
+            set { referenceDynamicDnaAsset = value; }
+        }
+
+        public ScriptableObject ReferenceDnaConverterController
+        {
+            get { return referenceDnaConverterController; }
+            set { referenceDnaConverterController = value; }
+        }
+
+        public ScriptableObject ReferenceDynamicDnaRanges
+        {
+            get { return referenceDynamicDnaRanges; }
+            set { referenceDynamicDnaRanges = value; }
         }
 
         private static UMAConverterSettings FindOrCreateInstance()
