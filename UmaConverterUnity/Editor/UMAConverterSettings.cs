@@ -7,6 +7,20 @@ namespace UMAConverter
     [CreateAssetMenu(fileName = "UMAConverterSettings", menuName = "UMA/Converter Settings")]
     public class UMAConverterSettings : ScriptableObject
     {
+        private static readonly string[] DefaultMaterialCandidatePaths = new string[]
+        {
+            "Packages/com.ovstudio.umaconverter/Runtime/UMAMaterials/CCMaterial.asset",
+            "Packages/com.vwgamedev.umaconverter/Runtime/UMAMaterials/CCMaterial.asset",
+            "Assets/Runtime/UMAMaterials/CCMaterial.asset"
+        };
+
+        private static readonly string[] TransparentMaterialCandidatePaths = new string[]
+        {
+            "Packages/com.ovstudio.umaconverter/Runtime/UMAMaterials/CCTransparentMaterial.asset",
+            "Packages/com.vwgamedev.umaconverter/Runtime/UMAMaterials/CCTransparentMaterial.asset",
+            "Assets/Runtime/UMAMaterials/CCTransparentMaterial.asset"
+        };
+
 
         public bool addToGlobalLibrary = true;
         public UMAMaterial defaultMaterial = null;
@@ -30,10 +44,7 @@ namespace UMAConverter
 
         public void OnEnable()
         {
-            if (defaultMaterial == null)
-            {
-                defaultMaterial = AssetDatabase.LoadAssetAtPath<UMAMaterial>("Packages/com.vwgamedev.umaconverter/Runtime/UMAMaterials/CCMaterial.asset");
-            }
+            EnsureMaterialReferences();
         }
 
         private static UMAConverterSettings instance;
@@ -46,6 +57,8 @@ namespace UMAConverter
                 {
                     instance = FindOrCreateInstance();
                 }
+
+                instance.EnsureMaterialReferences();
                 return instance;
             }
         }
@@ -54,12 +67,7 @@ namespace UMAConverter
         {
             get
             {
-                if (transparentMaterial == null)
-                {
-                    // Try to load from default location
-                    transparentMaterial = AssetDatabase.LoadAssetAtPath<UMAMaterial>(
-                        "Assets/Runtime/UMAMaterials/CCTransparentMaterial.asset");
-                }
+                EnsureMaterialReferences();
                 return transparentMaterial;
             }
         }
@@ -100,6 +108,33 @@ namespace UMAConverter
             }
 
             return settings;
+        }
+
+        private void EnsureMaterialReferences()
+        {
+            if (defaultMaterial == null)
+            {
+                defaultMaterial = LoadFirstMaterial(DefaultMaterialCandidatePaths);
+            }
+
+            if (transparentMaterial == null)
+            {
+                transparentMaterial = LoadFirstMaterial(TransparentMaterialCandidatePaths);
+            }
+        }
+
+        private static UMAMaterial LoadFirstMaterial(string[] candidatePaths)
+        {
+            foreach (string candidatePath in candidatePaths)
+            {
+                UMAMaterial material = AssetDatabase.LoadAssetAtPath<UMAMaterial>(candidatePath);
+                if (material != null)
+                {
+                    return material;
+                }
+            }
+
+            return null;
         }
     }
 }

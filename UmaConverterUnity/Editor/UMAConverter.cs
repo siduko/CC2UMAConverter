@@ -3,6 +3,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using Newtonsoft.Json;
@@ -200,6 +201,12 @@ namespace UMAConverter
             bool calcTangents = true;
             string stripBones = "";
 
+            if (material == null)
+            {
+                Debug.LogError("[UMAConverter] Cannot generate slot '" + slot.name + "' because no default UMA material could be resolved. Check UMAConverterSettings and ensure CCMaterial.asset is available in the package.");
+                return null;
+            }
+
             SlotBuilderParameters slotBuilderParameters = new SlotBuilderParameters();
             slotBuilderParameters.slotFolder = slotFolder;
             slotBuilderParameters.assetFolder = assetFolder;
@@ -219,12 +226,18 @@ namespace UMAConverter
 
             Debug.Log("[UMAConverter] Slot asset created: slot='" + slot.name + "', slotAsset='" + (slotAsset != null ? slotAsset.name : "<null>") + "', path='" + GetAssetPathSafe(slotAsset) + "', linkedMesh='" + (slotMesh != null ? slotMesh.name : "<null>") + "'.");
 
+            if (slotAsset == null)
+            {
+                Debug.LogWarning("[UMAConverter] Slot generation returned null for slot '" + slot.name + "'.");
+                return null;
+            }
+
             slotAsset.tags = new string[0];
-            UMAUpdateProcessor.UpdateSlot(slotAsset);
+            TryUpdateSlotAsset(slotAsset);
 
             if (addToGlobalLibrary)
             {
-                UMAAssetIndexer.Instance.EvilAddAsset(typeof(SlotDataAsset), slotAsset);
+                TryAddAssetToGlobalLibrary(typeof(SlotDataAsset), slotAsset);
             }
 
             // Create overlay
@@ -371,6 +384,12 @@ namespace UMAConverter
                 bool calcTangents = true;
                 string stripBones = "";
 
+                if (material == null)
+                {
+                    Debug.LogError("[UMAConverter] Cannot generate sub-slot for slot '" + slot.name + "', material '" + materialName + "' because no default UMA material could be resolved. Check UMAConverterSettings and ensure CCMaterial.asset is available in the package.");
+                    continue;
+                }
+
                 Debug.Log("[UMAConverter] Creating sub-slot for material: originalSlot='" + slot.name + "', material='" + materialName + "', subMeshIndex=" + materialIndex + ", uniqueSlotName='" + uniqueSlotName + "'.");
 
                 GameObject isolatedRendererObject = null;
@@ -426,11 +445,11 @@ namespace UMAConverter
                 if (subSlotAsset != null)
                 {
                     subSlotAsset.tags = new string[0];
-                    UMAUpdateProcessor.UpdateSlot(subSlotAsset);
+                    TryUpdateSlotAsset(subSlotAsset);
 
                     if (addToGlobalLibrary)
                     {
-                        UMAAssetIndexer.Instance.EvilAddAsset(typeof(SlotDataAsset), subSlotAsset);
+                        TryAddAssetToGlobalLibrary(typeof(SlotDataAsset), subSlotAsset);
                     }
 
                     layeredSlots.Add(subSlotAsset);
@@ -734,7 +753,7 @@ namespace UMAConverter
 
                 if (addToGlobalLibrary)
                 {
-                    UMAAssetIndexer.Instance.EvilAddAsset(typeof(UMA.CharacterSystem.UMAWardrobeRecipe), wardrobeRecipe);
+                    TryAddAssetToGlobalLibrary(typeof(UMA.CharacterSystem.UMAWardrobeRecipe), wardrobeRecipe);
                 }
             }
 
@@ -893,6 +912,54 @@ namespace UMAConverter
 
             string assetPath = AssetDatabase.GetAssetPath(asset);
             return string.IsNullOrEmpty(assetPath) ? "<no-asset-path>" : assetPath;
+        }
+
+        private UMAAssetIndexer GetAssetIndexerOrNull()
+        {
+            try
+            {
+                return UMAAssetIndexer.Instance;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("[UMAConverter] UMAAssetIndexer lookup failed: " + exception.Message);
+                return null;
+            }
+        }
+
+        private void TryUpdateSlotAsset(SlotDataAsset slotAsset)
+        {
+            UMAAssetIndexer indexer = GetAssetIndexerOrNull();
+            if (indexer == null)
+            {
+                Debug.LogWarning("[UMAConverter] Skipping UMAUpdateProcessor.UpdateSlot for '" + slotAsset.name + "' because UMAAssetIndexer is not initialized in this project.");
+                return;
+            }
+
+            UMAUpdateProcessor.UpdateSlot(slotAsset);
+        }
+
+        private void TryAddAssetToGlobalLibrary(Type assetType, UnityEngine.Object asset)
+        {
+            UMAAssetIndexer indexer = GetAssetIndexerOrNull();
+            if (indexer == null)
+            {
+                Debug.LogWarning("[UMAConverter] Skipping UMA asset index registration for '" + (asset != null ? asset.name : "<null>") + "' because UMAAssetIndexer is not initialized in this project.");
+                return;
+            }
+
+            indexer.EvilAddAsset(assetType, asset);
+        }
+
+        private void TrySetAssetIndexerDirty()
+        {
+            UMAAssetIndexer indexer = GetAssetIndexerOrNull();
+            if (indexer == null)
+            {
+                return;
+            }
+
+            EditorUtility.SetDirty(indexer);
         }
 
         public OverlayDataAsset CreateOverlay(string overlayPath, SlotDataAsset slotAsset, string slotName, string overlayName = null)
@@ -1215,7 +1282,7 @@ namespace UMAConverter
 
             if (addToGlobalLibrary)
             {
-                UMAAssetIndexer.Instance.EvilAddAsset(typeof(RaceData), raceData);
+                TryAddAssetToGlobalLibrary(typeof(RaceData), raceData);
             }
 
             // ----------------- Race Text Recipe -----------------
@@ -1261,10 +1328,10 @@ namespace UMAConverter
             if (addToGlobalLibrary)
             {
                 // Add it to the global libary
-                UMAAssetIndexer.Instance.EvilAddAsset(typeof(UMA.CharacterSystem.UMAWardrobeRecipe), asset);
-                UMAAssetIndexer.Instance.EvilAddAsset(typeof(UMATextRecipe), asset);
+                TryAddAssetToGlobalLibrary(typeof(UMA.CharacterSystem.UMAWardrobeRecipe), asset);
+                TryAddAssetToGlobalLibrary(typeof(UMATextRecipe), asset);
 
-                EditorUtility.SetDirty(UMAAssetIndexer.Instance);
+                TrySetAssetIndexerDirty();
 
             }
 
@@ -1335,7 +1402,7 @@ namespace UMAConverter
             {
                 try
                 {
-                    UMAAssetIndexer.Instance.EvilAddAsset(dynamicDnaType, dynamicDnaAsset);
+                    TryAddAssetToGlobalLibrary(dynamicDnaType, dynamicDnaAsset);
                 }
                 catch (Exception)
                 {
@@ -1503,6 +1570,7 @@ namespace UMAConverter
             if (existing != null)
             {
                 TryAssignDnaAssetToController(existing, dynamicDnaAsset, raceName);
+                EnsureStartingBonePosePlugin(existing, null, raceName);
                 return existing;
             }
 
@@ -1577,6 +1645,8 @@ namespace UMAConverter
                 Debug.LogWarning("[UMAConverter] Dynamic DNA asset could not be assigned to generated DNAConverterController for race '" + raceName + "'.");
             }
 
+            EnsureStartingBonePosePlugin(controller, plugins, raceName);
+
             controllerSO.ApplyModifiedPropertiesWithoutUndo();
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssetIfDirty(controller);
@@ -1584,6 +1654,287 @@ namespace UMAConverter
             Debug.Log("[UMAConverter] DNAConverterController created: path='" + controllerPath + "', plugins=" + plugins.Count + ".");
 
             return controller;
+        }
+
+        private void EnsureStartingBonePosePlugin(ScriptableObject controller, List<ScriptableObject> plugins, string raceName)
+        {
+            if (controller == null)
+            {
+                return;
+            }
+
+            UMABonePose startingPose = GenerateDynamicDnaStartingPose(raceName);
+            if (startingPose == null)
+            {
+                Debug.LogWarning("[UMAConverter] Dynamic DNA starting pose generation failed for race '" + raceName + "'.");
+                return;
+            }
+
+            ScriptableObject bonePosePlugin = FindBonePosePlugin(controller, plugins);
+            if (bonePosePlugin == null)
+            {
+                Type bonePosePluginType = FindTypeByName(
+                    "UMA.PoseTools.BonePoseDNAConverterPlugin",
+                    "BonePoseDNAConverterPlugin");
+
+                bonePosePlugin = CreateControllerPluginAsset(controller, bonePosePluginType, "BonePoseDNAConverters");
+                if (bonePosePlugin == null)
+                {
+                    Debug.LogWarning("[UMAConverter] BonePoseDNAConverterPlugin type was not found. Starting pose could not be assigned for race '" + raceName + "'.");
+                    return;
+                }
+
+                if (plugins != null)
+                {
+                    plugins.Add(bonePosePlugin);
+                }
+            }
+
+            SerializedObject pluginSO = new SerializedObject(bonePosePlugin);
+            SerializedProperty convertersProperty = pluginSO.FindProperty("_poseDNAConverters");
+            if (convertersProperty == null || !convertersProperty.isArray)
+            {
+                Debug.LogWarning("[UMAConverter] BonePoseDNAConverterPlugin did not expose a _poseDNAConverters array. Starting pose could not be assigned for race '" + raceName + "'.");
+                return;
+            }
+
+            int targetIndex = FindStartingPoseConverterIndex(convertersProperty);
+            if (targetIndex < 0)
+            {
+                targetIndex = convertersProperty.arraySize;
+                convertersProperty.InsertArrayElementAtIndex(targetIndex);
+            }
+
+            SerializedProperty converterProperty = convertersProperty.GetArrayElementAtIndex(targetIndex);
+            SerializedProperty poseProperty = converterProperty.FindPropertyRelative("_poseToApply");
+            if (poseProperty != null)
+            {
+                poseProperty.objectReferenceValue = startingPose;
+            }
+
+            SerializedProperty startingWeightProperty = converterProperty.FindPropertyRelative("_startingPoseWeight");
+            if (startingWeightProperty != null)
+            {
+                startingWeightProperty.floatValue = 1f;
+            }
+
+            SerializedProperty modifyingDnaProperty = converterProperty.FindPropertyRelative("_modifyingDNA");
+            if (modifyingDnaProperty != null)
+            {
+                SerializedProperty evaluatorsProperty = modifyingDnaProperty.FindPropertyRelative("_dnaEvaluators");
+                if (evaluatorsProperty != null && evaluatorsProperty.isArray)
+                {
+                    evaluatorsProperty.arraySize = 0;
+                }
+
+                SerializedProperty aggregationMethodProperty = modifyingDnaProperty.FindPropertyRelative("_aggregationMethod");
+                if (aggregationMethodProperty != null)
+                {
+                    aggregationMethodProperty.intValue = 0;
+                }
+            }
+
+            pluginSO.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(bonePosePlugin);
+            AssetDatabase.SaveAssetIfDirty(bonePosePlugin);
+
+            Debug.Log("[UMAConverter] Starting bone pose assigned: race='" + raceName + "', pose='" + startingPose.name + "', plugin='" + bonePosePlugin.name + "'.");
+        }
+
+        private ScriptableObject FindBonePosePlugin(ScriptableObject controller, List<ScriptableObject> plugins)
+        {
+            if (plugins != null)
+            {
+                for (int i = 0; i < plugins.Count; i++)
+                {
+                    ScriptableObject candidate = plugins[i];
+                    if (candidate != null && string.Equals(candidate.GetType().Name, "BonePoseDNAConverterPlugin", StringComparison.Ordinal))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+
+            SerializedObject controllerSO = new SerializedObject(controller);
+            SerializedProperty pluginsProperty = controllerSO.FindProperty("_plugins");
+            if (pluginsProperty == null || !pluginsProperty.isArray)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < pluginsProperty.arraySize; i++)
+            {
+                ScriptableObject candidate = pluginsProperty.GetArrayElementAtIndex(i).objectReferenceValue as ScriptableObject;
+                if (candidate != null && string.Equals(candidate.GetType().Name, "BonePoseDNAConverterPlugin", StringComparison.Ordinal))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private int FindStartingPoseConverterIndex(SerializedProperty convertersProperty)
+        {
+            for (int i = 0; i < convertersProperty.arraySize; i++)
+            {
+                SerializedProperty converterProperty = convertersProperty.GetArrayElementAtIndex(i);
+                SerializedProperty startingWeightProperty = converterProperty.FindPropertyRelative("_startingPoseWeight");
+                SerializedProperty poseProperty = converterProperty.FindPropertyRelative("_poseToApply");
+
+                UnityEngine.Object poseAsset = poseProperty != null ? poseProperty.objectReferenceValue : null;
+                string poseName = poseAsset != null ? poseAsset.name : string.Empty;
+                if ((startingWeightProperty != null && startingWeightProperty.floatValue > 0f) ||
+                    poseName.IndexOf("DynamicDNAStartingPose", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private UMABonePose GenerateDynamicDnaStartingPose(string raceName)
+        {
+            string posePath = workingDirectory + "/Race/" + raceName + "DynamicDNAStartingPose.asset";
+            UMABonePose startingPose = AssetDatabase.LoadAssetAtPath<UMABonePose>(posePath);
+            bool poseAlreadyExists = startingPose != null;
+            if (startingPose == null)
+            {
+                startingPose = ScriptableObject.CreateInstance<UMABonePose>();
+            }
+
+            if (startingPose == null)
+            {
+                return null;
+            }
+
+            startingPose.name = raceName + "DynamicDNAStartingPose";
+            PopulateStartingBonePose(startingPose);
+
+            if (poseAlreadyExists)
+            {
+                EditorUtility.SetDirty(startingPose);
+                AssetDatabase.SaveAssetIfDirty(startingPose);
+            }
+            else
+            {
+                AssetDatabase.CreateAsset(startingPose, posePath);
+                AssetDatabase.SaveAssets();
+            }
+
+            Debug.Log("[UMAConverter] Dynamic DNA starting pose " + (poseAlreadyExists ? "updated" : "created") + ": path='" + posePath + "', poses=" + (startingPose.poses != null ? startingPose.poses.Length : 0) + ".");
+            return startingPose;
+        }
+
+        private void PopulateStartingBonePose(UMABonePose bonePose)
+        {
+            if (bonePose == null)
+            {
+                return;
+            }
+
+            List<Transform> boneTransforms = CollectStartingPoseTransforms();
+            List<UMABonePose.PoseBone> poseBones = new List<UMABonePose.PoseBone>(boneTransforms.Count);
+
+            for (int i = 0; i < boneTransforms.Count; i++)
+            {
+                Transform boneTransform = boneTransforms[i];
+                if (boneTransform == null)
+                {
+                    continue;
+                }
+
+                UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
+                poseBone.bone = boneTransform.name;
+                poseBone.hash = UMAUtils.StringToHash(boneTransform.name);
+                poseBone.position = boneTransform.localPosition;
+                poseBone.rotation = boneTransform.localRotation;
+                poseBone.scale = boneTransform.localScale;
+                poseBone.category = string.Empty;
+                poseBones.Add(poseBone);
+            }
+
+            bonePose.poses = poseBones.ToArray();
+        }
+
+        private List<Transform> CollectStartingPoseTransforms()
+        {
+            HashSet<Transform> transforms = new HashSet<Transform>();
+            if (model == null)
+            {
+                return new List<Transform>();
+            }
+
+            SkinnedMeshRenderer[] renderers = model.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                SkinnedMeshRenderer renderer = renderers[i];
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                AddTransformChain(renderer.rootBone, transforms);
+
+                Transform[] rendererBones = renderer.bones;
+                if (rendererBones == null)
+                {
+                    continue;
+                }
+
+                for (int boneIndex = 0; boneIndex < rendererBones.Length; boneIndex++)
+                {
+                    AddTransformChain(rendererBones[boneIndex], transforms);
+                }
+            }
+
+            if (transforms.Count == 0)
+            {
+                Transform[] allTransforms = model.GetComponentsInChildren<Transform>(true);
+                for (int i = 0; i < allTransforms.Length; i++)
+                {
+                    Transform transform = allTransforms[i];
+                    if (transform != null && transform != model.transform)
+                    {
+                        transforms.Add(transform);
+                    }
+                }
+            }
+
+            return transforms
+                .Where(transform => transform != null && transform != model.transform)
+                .OrderBy(transform => GetTransformHierarchyPath(transform), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void AddTransformChain(Transform leaf, HashSet<Transform> transforms)
+        {
+            Transform current = leaf;
+            while (current != null && current != model.transform)
+            {
+                transforms.Add(current);
+                current = current.parent;
+            }
+        }
+
+        private string GetTransformHierarchyPath(Transform transform)
+        {
+            if (transform == null)
+            {
+                return string.Empty;
+            }
+
+            List<string> segments = new List<string>();
+            Transform current = transform;
+            while (current != null && current != model.transform)
+            {
+                segments.Add(current.name);
+                current = current.parent;
+            }
+
+            segments.Reverse();
+            return string.Join("/", segments.ToArray());
         }
 
         private bool TryAssignDnaAssetToController(ScriptableObject controller, UnityEngine.Object dnaAsset, string raceName)
@@ -1751,6 +2102,8 @@ namespace UMAConverter
                     converterControllerProperty.objectReferenceValue = targetController;
                 }
 
+                ClearRigSpecificSkeletonModifiers(clonedPluginSO, clonedPlugin);
+
                 clonedPluginSO.ApplyModifiedPropertiesWithoutUndo();
                 EditorUtility.SetDirty(clonedPlugin);
                 
@@ -1761,6 +2114,30 @@ namespace UMAConverter
             }
 
             return clonedPlugins;
+        }
+
+        private void ClearRigSpecificSkeletonModifiers(SerializedObject pluginSO, ScriptableObject plugin)
+        {
+            if (pluginSO == null || plugin == null)
+            {
+                return;
+            }
+
+            if (!string.Equals(plugin.GetType().Name, "SkeletonDNAConverterPlugin", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            SerializedProperty skeletonModifiersProperty = pluginSO.FindProperty("_skeletonModifiers");
+            if (skeletonModifiersProperty == null || !skeletonModifiersProperty.isArray || skeletonModifiersProperty.arraySize == 0)
+            {
+                return;
+            }
+
+            int removedModifierCount = skeletonModifiersProperty.arraySize;
+            skeletonModifiersProperty.arraySize = 0;
+
+            Debug.LogWarning("[UMAConverter] Cleared " + removedModifierCount + " cloned skeleton modifiers from '" + plugin.name + "' because reference-controller bone names are rig-specific and cannot be reused safely.");
         }
 
         private void CopyNestedArrayProperties(SerializedObject sourceObject, SerializedObject targetObject)
@@ -1858,7 +2235,7 @@ namespace UMAConverter
             {
                 try
                 {
-                    UMAAssetIndexer.Instance.EvilAddAsset(dnaRangesType, dnaRanges);
+                    TryAddAssetToGlobalLibrary(dnaRangesType, dnaRanges);
                 }
                 catch (Exception)
                 {
@@ -2431,7 +2808,7 @@ namespace UMAConverter
             {
                 try
                 {
-                    UMAAssetIndexer.Instance.EvilAddAsset(typeof(UMAExpressionSet), expressionSet);
+                    TryAddAssetToGlobalLibrary(typeof(UMAExpressionSet), expressionSet);
                 }
                 catch (System.Exception)
                 {
