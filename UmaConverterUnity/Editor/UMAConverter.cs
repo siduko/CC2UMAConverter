@@ -2974,33 +2974,117 @@ namespace UMAConverter
         }
 
         /// <summary>
-        // Maps each ExpressionPlayer channel name to the HumanBodyBones that drive it.
+        /// Maps each ExpressionPlayer channel name to the HumanBodyBones that drive it.
+        /// Channels that involve rig-specific facial bones (brows, cheeks, lips, etc.) which have no
+        /// standard HumanBodyBones equivalent are registered with an empty array; their bones are
+        /// resolved at runtime via <see cref="poseChannelFaceBoneNames"/>.
+        /// </summary>
         private static readonly Dictionary<string, HumanBodyBones[]> poseChannelBones = new Dictionary<string, HumanBodyBones[]>
         {
-            { "neckUp_Down",          new[] { HumanBodyBones.Neck } },
-            { "neckLeft_Right",       new[] { HumanBodyBones.Neck } },
-            { "neckTiltLeft_Right",   new[] { HumanBodyBones.Neck } },
-            { "headUp_Down",          new[] { HumanBodyBones.Head } },
-            { "headLeft_Right",       new[] { HumanBodyBones.Head } },
-            { "headTiltLeft_Right",   new[] { HumanBodyBones.Head } },
-            { "jawOpen_Close",        new[] { HumanBodyBones.Jaw } },
-            { "jawForward_Back",      new[] { HumanBodyBones.Jaw } },
-            { "jawLeft_Right",        new[] { HumanBodyBones.Jaw } },
-            { "leftEyeOpen_Close",    new[] { HumanBodyBones.LeftEye } },
-            { "leftEyeUp_Down",       new[] { HumanBodyBones.LeftEye } },
-            { "leftEyeIn_Out",        new[] { HumanBodyBones.LeftEye } },
-            { "rightEyeOpen_Close",   new[] { HumanBodyBones.RightEye } },
-            { "rightEyeUp_Down",      new[] { HumanBodyBones.RightEye } },
-            { "rightEyeIn_Out",       new[] { HumanBodyBones.RightEye } },
-            { "leftGrasp",            new[] { HumanBodyBones.LeftIndexProximal, HumanBodyBones.LeftMiddleProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
-            { "rightGrasp",           new[] { HumanBodyBones.RightIndexProximal, HumanBodyBones.RightMiddleProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
-            { "leftPeace",            new[] { HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
-            { "rightPeace",           new[] { HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
-            { "leftPoint",            new[] { HumanBodyBones.LeftMiddleProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
-            { "rightPoint",           new[] { HumanBodyBones.RightMiddleProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
-            { "leftRude",             new[] { HumanBodyBones.LeftIndexProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
-            { "rightRude",            new[] { HumanBodyBones.RightIndexProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
+            // ── Neck ──────────────────────────────────────────────────────────────
+            { "neckUp_Down",            new[] { HumanBodyBones.Neck } },
+            { "neckLeft_Right",         new[] { HumanBodyBones.Neck } },
+            { "neckTiltLeft_Right",     new[] { HumanBodyBones.Neck } },
+            // ── Head ──────────────────────────────────────────────────────────────
+            { "headUp_Down",            new[] { HumanBodyBones.Head } },
+            { "headLeft_Right",         new[] { HumanBodyBones.Head } },
+            { "headTiltLeft_Right",     new[] { HumanBodyBones.Head } },
+            // ── Jaw ───────────────────────────────────────────────────────────────
+            { "jawOpen_Close",          new[] { HumanBodyBones.Jaw } },
+            { "jawForward_Back",        new[] { HumanBodyBones.Jaw } },
+            { "jawLeft_Right",          new[] { HumanBodyBones.Jaw } },
+            // ── Eyes ──────────────────────────────────────────────────────────────
+            { "leftEyeOpen_Close",      new[] { HumanBodyBones.LeftEye } },
+            { "leftEyeUp_Down",         new[] { HumanBodyBones.LeftEye } },
+            { "leftEyeIn_Out",          new[] { HumanBodyBones.LeftEye } },
+            { "rightEyeOpen_Close",     new[] { HumanBodyBones.RightEye } },
+            { "rightEyeUp_Down",        new[] { HumanBodyBones.RightEye } },
+            { "rightEyeIn_Out",         new[] { HumanBodyBones.RightEye } },
+            // ── Brows — no standard HumanBodyBones; verbatim-copied from reference ─
+            { "browsIn",                new HumanBodyBones[0] },
+            { "leftBrowUp_Down",        new HumanBodyBones[0] },
+            { "rightBrowUp_Down",       new HumanBodyBones[0] },
+            // ── Cheeks — no standard HumanBodyBones ──────────────────────────────
+            { "leftCheekPuff_Squint",   new HumanBodyBones[0] },
+            { "rightCheekPuff_Squint",  new HumanBodyBones[0] },
+            // ── Nose — no standard HumanBodyBones ────────────────────────────────
+            { "noseSneer",              new HumanBodyBones[0] },
+            // ── Lips — no standard HumanBodyBones ────────────────────────────────
+            { "leftLipUp_Down",         new HumanBodyBones[0] },
+            { "rightLipUp_Down",        new HumanBodyBones[0] },
+            { "midLipUp_Down",          new HumanBodyBones[0] },
+            { "leftLipIn_Out",          new HumanBodyBones[0] },
+            { "rightLipIn_Out",         new HumanBodyBones[0] },
+            // ── Mouth — no standard HumanBodyBones ───────────────────────────────
+            { "mouthNarrow_Pucker",     new HumanBodyBones[0] },
+            { "mouthUp_Down",           new HumanBodyBones[0] },
+            { "mouthLeft_Right",        new HumanBodyBones[0] },
+            // ── Tongue — no standard HumanBodyBones ──────────────────────────────
+            { "tongueUp_Down",          new HumanBodyBones[0] },
+            { "tongueLeft_Right",       new HumanBodyBones[0] },
+            { "tongueIn_Out",           new HumanBodyBones[0] },
+            // ── Hand poses ────────────────────────────────────────────────────────
+            { "leftGrasp",              new[] { HumanBodyBones.LeftIndexProximal, HumanBodyBones.LeftMiddleProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
+            { "rightGrasp",             new[] { HumanBodyBones.RightIndexProximal, HumanBodyBones.RightMiddleProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
+            { "leftPeace",              new[] { HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
+            { "rightPeace",             new[] { HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
+            { "leftPoint",              new[] { HumanBodyBones.LeftMiddleProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
+            { "rightPoint",             new[] { HumanBodyBones.RightMiddleProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
+            { "leftRude",               new[] { HumanBodyBones.LeftIndexProximal, HumanBodyBones.LeftRingProximal, HumanBodyBones.LeftLittleProximal } },
+            { "rightRude",              new[] { HumanBodyBones.RightIndexProximal, HumanBodyBones.RightRingProximal, HumanBodyBones.RightLittleProximal } },
         };
+
+        /// <summary>
+        /// Maps facial expression channels (no standard HumanBodyBones) to the ordered list of bone
+        /// names expected to be present in the rig. Names are matched case-insensitively against the
+        /// loaded model's transform hierarchy.
+        /// </summary>
+        private static readonly Dictionary<string, string[]> poseChannelFaceBoneNames =
+            new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            // ── Brows ──────────────────────────────────────────────────────────────
+            { "browsIn",                new[] { "lBrowInner", "rBrowInner" } },
+            { "leftBrowUp_Down",        new[] { "lBrowInner", "lBrowMid", "lBrowOuter" } },
+            { "rightBrowUp_Down",       new[] { "rBrowInner", "rBrowMid", "rBrowOuter" } },
+            // ── Cheeks ─────────────────────────────────────────────────────────────
+            { "leftCheekPuff_Squint",   new[] { "lCheek" } },
+            { "rightCheekPuff_Squint",  new[] { "rCheek" } },
+            // ── Nose ───────────────────────────────────────────────────────────────
+            { "noseSneer",              new[] { "noseL", "noseR" } },
+            // ── Lips ───────────────────────────────────────────────────────────────
+            { "leftLipUp_Down",         new[] { "lLipUpper", "lLipLower" } },
+            { "rightLipUp_Down",        new[] { "rLipUpper", "rLipLower" } },
+            { "midLipUp_Down",          new[] { "upperLip", "lowerLip" } },
+            { "leftLipIn_Out",          new[] { "lLipUpper", "lLipLower" } },
+            { "rightLipIn_Out",         new[] { "rLipUpper", "rLipLower" } },
+            // ── Mouth ──────────────────────────────────────────────────────────────
+            { "mouthNarrow_Pucker",     new[] { "lLipUpper", "rLipUpper", "lLipLower", "rLipLower" } },
+            { "mouthUp_Down",           new[] { "lLipUpper", "rLipUpper", "lLipLower", "rLipLower" } },
+            { "mouthLeft_Right",        new[] { "lLipUpper", "rLipUpper", "lLipLower", "rLipLower" } },
+            // ── Tongue ─────────────────────────────────────────────────────────────
+            { "tongueUp_Down",          new[] { "tongue01", "tongue02", "tongue03", "tongue04" } },
+            { "tongueLeft_Right",       new[] { "tongue01", "tongue02", "tongue03", "tongue04" } },
+            { "tongueIn_Out",           new[] { "tongue01", "tongue02", "tongue03", "tongue04" } },
+        };
+
+        /// <summary>
+        /// Searches the loaded model's transform hierarchy for a bone whose name matches
+        /// <paramref name="boneName"/> (case-insensitive exact match).
+        /// Returns the bone's actual name as it appears in the rig, or null if not found.
+        /// </summary>
+        private string FindBoneNameInModel(string boneName)
+        {
+            if (model == null || string.IsNullOrEmpty(boneName))
+                return null;
+
+            Transform[] allTransforms = model.GetComponentsInChildren<Transform>(true);
+            foreach (Transform t in allTransforms)
+            {
+                if (string.Equals(t.name, boneName, StringComparison.OrdinalIgnoreCase))
+                    return t.name;
+            }
+            return null;
+        }
 
         /// <summary>
         /// Returns the actual rig bone name for a given HumanBodyBones value using the mesh's humanDescription.
@@ -3030,22 +3114,186 @@ namespace UMAConverter
             if (!poseChannelBones.TryGetValue(channelName, out humanBones)) return;
 
             List<UMABonePose.PoseBone> poseBones = new List<UMABonePose.PoseBone>();
-            foreach (HumanBodyBones humanBone in humanBones)
-            {
-                string boneName = GetBoneNameForHumanBone(humanBone);
-                if (string.IsNullOrEmpty(boneName)) continue;
 
-                UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
-                poseBone.bone = boneName;
-                poseBone.hash = UMAUtils.StringToHash(boneName);
-                poseBone.position = Vector3.zero;
-                poseBone.rotation = Quaternion.identity;
-                poseBone.scale = Vector3.one;
-                poseBone.category = channelName;
-                poseBones.Add(poseBone);
+            if (humanBones.Length > 0)
+            {
+                // Standard humanoid channel — resolve bone names via humanoid rig mapping.
+                foreach (HumanBodyBones humanBone in humanBones)
+                {
+                    string boneName = GetBoneNameForHumanBone(humanBone);
+                    if (string.IsNullOrEmpty(boneName)) continue;
+
+                    UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
+                    poseBone.bone = boneName;
+                    poseBone.hash = UMAUtils.StringToHash(boneName);
+                    poseBone.position = Vector3.zero;
+                    poseBone.rotation = Quaternion.identity;
+                    poseBone.scale = Vector3.one;
+                    poseBone.category = channelName;
+                    poseBones.Add(poseBone);
+                }
+            }
+            else
+            {
+                // Facial channel — search the loaded model for bones by name pattern.
+                string[] boneNamePatterns;
+                if (poseChannelFaceBoneNames.TryGetValue(channelName, out boneNamePatterns))
+                {
+                    foreach (string pattern in boneNamePatterns)
+                    {
+                        string foundBone = FindBoneNameInModel(pattern);
+                        if (string.IsNullOrEmpty(foundBone)) continue;
+
+                        UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
+                        poseBone.bone = foundBone;
+                        poseBone.hash = UMAUtils.StringToHash(foundBone);
+                        poseBone.position = Vector3.zero;
+                        poseBone.rotation = Quaternion.identity;
+                        poseBone.scale = Vector3.one;
+                        poseBone.category = channelName;
+                        poseBones.Add(poseBone);
+                    }
+                }
             }
 
             bonePose.poses = poseBones.ToArray();
+        }
+
+        /// <summary>
+        /// Copies pose bones from a reference UMABonePose into the target, remapping each bone name
+        /// to the current rig using the humanoid bone mapping. Bones that cannot be remapped are skipped.
+        /// Falls back to identity-delta bones (via PopulateBonePose) when no reference source is provided.
+        /// </summary>
+        private void CopyPosesFromReference(UMABonePose target, UMABonePose referencePose, string channelName)
+        {
+            if (referencePose == null || referencePose.poses == null || referencePose.poses.Length == 0)
+            {
+                PopulateBonePose(target, channelName);
+                return;
+            }
+
+            // Build a reverse map: reference bone name → HumanBodyBones, so we can remap to the current rig.
+            // The reference model may have different actual bone names, but they should map to the same
+            // humanoid bones. We use poseChannelBones to find which HumanBodyBones the channel drives,
+            // then remap each reference PoseBone to the current rig's bone name.
+            HumanBodyBones[] humanBones;
+            bool channelKnown = poseChannelBones.TryGetValue(channelName, out humanBones);
+
+            List<UMABonePose.PoseBone> result = new List<UMABonePose.PoseBone>();
+
+            if (channelKnown && humanBones != null && humanBones.Length > 0)
+            {
+                // Humanoid channel: remap by HumanBodyBones index.
+                for (int boneIndex = 0; boneIndex < humanBones.Length; boneIndex++)
+                {
+                    string currentBoneName = GetBoneNameForHumanBone(humanBones[boneIndex]);
+                    if (string.IsNullOrEmpty(currentBoneName)) continue;
+
+                    UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
+                    poseBone.bone = currentBoneName;
+                    poseBone.hash = UMAUtils.StringToHash(currentBoneName);
+                    poseBone.category = channelName;
+
+                    if (boneIndex < referencePose.poses.Length)
+                    {
+                        poseBone.position = referencePose.poses[boneIndex].position;
+                        poseBone.rotation = referencePose.poses[boneIndex].rotation;
+                        poseBone.scale   = referencePose.poses[boneIndex].scale;
+                    }
+                    else
+                    {
+                        poseBone.position = Vector3.zero;
+                        poseBone.rotation = Quaternion.identity;
+                        poseBone.scale    = Vector3.one;
+                    }
+
+                    result.Add(poseBone);
+                }
+            }
+            else if (channelKnown) // empty HumanBodyBones[] = known facial channel
+            {
+                // Facial channel: find bones in the current rig by name pattern.
+                // Copy transforms from the reference by name match first, then by index as fallback.
+                string[] boneNamePatterns;
+                if (poseChannelFaceBoneNames.TryGetValue(channelName, out boneNamePatterns))
+                {
+                    for (int boneIndex = 0; boneIndex < boneNamePatterns.Length; boneIndex++)
+                    {
+                        string currentBoneName = FindBoneNameInModel(boneNamePatterns[boneIndex]);
+                        if (string.IsNullOrEmpty(currentBoneName)) continue;
+
+                        UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
+                        poseBone.bone = currentBoneName;
+                        poseBone.hash = UMAUtils.StringToHash(currentBoneName);
+                        poseBone.category = channelName;
+
+                        // 1. Try to match by bone name from reference (handles same-name rigs).
+                        bool matched = false;
+                        for (int r = 0; r < referencePose.poses.Length; r++)
+                        {
+                            if (string.Equals(referencePose.poses[r].bone, boneNamePatterns[boneIndex], StringComparison.OrdinalIgnoreCase))
+                            {
+                                poseBone.position = referencePose.poses[r].position;
+                                poseBone.rotation = referencePose.poses[r].rotation;
+                                poseBone.scale    = referencePose.poses[r].scale;
+                                matched = true;
+                                break;
+                            }
+                        }
+
+                        // 2. Fallback: copy by slot index.
+                        if (!matched)
+                        {
+                            if (boneIndex < referencePose.poses.Length)
+                            {
+                                poseBone.position = referencePose.poses[boneIndex].position;
+                                poseBone.rotation = referencePose.poses[boneIndex].rotation;
+                                poseBone.scale    = referencePose.poses[boneIndex].scale;
+                            }
+                            else
+                            {
+                                poseBone.position = Vector3.zero;
+                                poseBone.rotation = Quaternion.identity;
+                                poseBone.scale    = Vector3.one;
+                            }
+                        }
+
+                        result.Add(poseBone);
+                    }
+                }
+                else
+                {
+                    // Known channel but no face bone patterns — verbatim copy.
+                    foreach (UMABonePose.PoseBone refBone in referencePose.poses)
+                    {
+                        UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
+                        poseBone.bone     = refBone.bone;
+                        poseBone.hash     = refBone.hash;
+                        poseBone.position = refBone.position;
+                        poseBone.rotation = refBone.rotation;
+                        poseBone.scale    = refBone.scale;
+                        poseBone.category = refBone.category;
+                        result.Add(poseBone);
+                    }
+                }
+            }
+            else
+            {
+                // Unknown channel — verbatim copy.
+                foreach (UMABonePose.PoseBone refBone in referencePose.poses)
+                {
+                    UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
+                    poseBone.bone     = refBone.bone;
+                    poseBone.hash     = refBone.hash;
+                    poseBone.position = refBone.position;
+                    poseBone.rotation = refBone.rotation;
+                    poseBone.scale    = refBone.scale;
+                    poseBone.category = refBone.category;
+                    result.Add(poseBone);
+                }
+            }
+
+            target.poses = result.ToArray();
         }
 
         /// <summary>
@@ -3068,6 +3316,8 @@ namespace UMAConverter
             string raceName = (this.data as UMAData_Race).name;
             string expressionSetPath = expressionsFolder + "/" + raceName + "_ExpressionSet.asset";
 
+            UMAExpressionSet referenceSet = UMAConverterSettings.Instance.ReferenceExpressionSet;
+
             UMAExpressionSet expressionSet = ScriptableObject.CreateInstance<UMAExpressionSet>();
             expressionSet.posePairs = new UMAExpressionSet.PosePair[ExpressionPlayer.PoseCount];
 
@@ -3081,14 +3331,26 @@ namespace UMAConverter
                 UMABonePose primaryPose = ScriptableObject.CreateInstance<UMABonePose>();
                 primaryPose.name = raceName + "_" + channelName + "_primary";
                 primaryPose.poses = new UMABonePose.PoseBone[0];
-                PopulateBonePose(primaryPose, channelName);
-                string primaryPath = posesFolder + "/" + primaryPose.name + ".asset";
-                AssetDatabase.CreateAsset(primaryPose, primaryPath);
 
                 UMABonePose inversePose = ScriptableObject.CreateInstance<UMABonePose>();
                 inversePose.name = raceName + "_" + channelName + "_inverse";
                 inversePose.poses = new UMABonePose.PoseBone[0];
-                PopulateBonePose(inversePose, channelName);
+
+                if (referenceSet != null && referenceSet.posePairs != null && i < referenceSet.posePairs.Length)
+                {
+                    UMAExpressionSet.PosePair refPair = referenceSet.posePairs[i];
+                    CopyPosesFromReference(primaryPose, refPair.primary, channelName);
+                    CopyPosesFromReference(inversePose, refPair.inverse, channelName);
+                }
+                else
+                {
+                    PopulateBonePose(primaryPose, channelName);
+                    PopulateBonePose(inversePose, channelName);
+                }
+
+                string primaryPath = posesFolder + "/" + primaryPose.name + ".asset";
+                AssetDatabase.CreateAsset(primaryPose, primaryPath);
+
                 string inversePath = posesFolder + "/" + inversePose.name + ".asset";
                 AssetDatabase.CreateAsset(inversePose, inversePath);
 
@@ -3113,7 +3375,8 @@ namespace UMAConverter
                 }
             }
 
-            Debug.Log("[UMAConverter] ExpressionSet created: path='" + expressionSetPath + "', posePairs=" + expressionSet.posePairs.Length + " (each with primary+inverse UMABonePose)");
+            string refLog = referenceSet != null ? "reference='" + referenceSet.name + "'" : "reference=none (identity poses)";
+            Debug.Log("[UMAConverter] ExpressionSet created: path='" + expressionSetPath + "', posePairs=" + expressionSet.posePairs.Length + " (" + refLog + ")");
             return expressionSet;
         }
 
