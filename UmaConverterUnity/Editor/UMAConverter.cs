@@ -1072,10 +1072,6 @@ namespace UMAConverter
                 {
                     resolvedTextureCount++;
                 }
-                else
-                {
-                    Debug.LogWarning("[UMAConverter] No texture found for channel '" + channel.materialPropertyName + "' (overlay='" + overlayName + "')");
-                }
 
                 textures.Add(texture);
             }
@@ -1317,6 +1313,7 @@ namespace UMAConverter
                 index++;
             }
             recipe.SetRace(raceData);
+            TryAddDnaToRecipe(recipe, dynamicDnaAsset);
             asset.Save(recipe, UMAContextBase.Instance);
             asset.DisplayValue = (this.data as UMAData_Race).name + "_TextRecipe";
 
@@ -1640,7 +1637,15 @@ namespace UMAConverter
             }
 
             UnityEngine.Object assignedDnaAsset = dynamicDnaAsset != null ? dynamicDnaAsset : FindBestMatchingDnaAsset(raceName);
-            if (!TryAssignDnaAssetToController(controller, assignedDnaAsset, raceName))
+
+            // Assign _dnaAsset in the SAME SerializedObject so it is not overwritten when Apply is called below.
+            SerializedProperty dnaAssetProp = controllerSO.FindProperty("_dnaAsset");
+            if (dnaAssetProp != null && assignedDnaAsset != null)
+            {
+                dnaAssetProp.objectReferenceValue = assignedDnaAsset;
+                Debug.Log("[UMAConverter] Assigned _dnaAsset in controllerSO: asset='" + assignedDnaAsset.name + "'.");
+            }
+            else if (assignedDnaAsset == null)
             {
                 Debug.LogWarning("[UMAConverter] Dynamic DNA asset could not be assigned to generated DNAConverterController for race '" + raceName + "'.");
             }
@@ -2814,6 +2819,110 @@ namespace UMAConverter
             return fallback;
         }
 
+        private void TryAddDnaToRecipe(UMAData.UMARecipe recipe, UnityEngine.Object dynamicDnaAsset)
+        {
+            if (recipe == null || dynamicDnaAsset == null) return;
+
+            // DynamicUMADna lives in the UMA namespace (not UMA.CharacterSystem).
+            Type dynamicDnaType = FindTypeByName("UMA.DynamicUMADna", "DynamicUMADna");
+            if (dynamicDnaType == null)
+            {
+                Debug.LogWarning("[UMAConverter] DynamicUMADna type not found. Cannot add DNA to text recipe.");
+                return;
+            }
+
+            int dnaTypeHash = UMAUtils.StringToHash(dynamicDnaAsset.name);
+
+            // Skip if DNA with this hash is already present (e.g. added by SetRace).
+            UMADnaBase existingDna = recipe.GetDna(dnaTypeHash);
+            if (existingDna != null)
+            {
+                Debug.Log("[UMAConverter] DNA already present in recipe for typeHash=" + dnaTypeHash + ". Skipping.");
+                return;
+            }
+
+            UMADnaBase dna;
+            try
+            {
+                dna = (UMADnaBase)Activator.CreateInstance(dynamicDnaType);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[UMAConverter] Could not create DynamicUMADna instance: " + e.Message);
+                return;
+            }
+
+            // dnaAsset is an abstract property whose setter also populates dnaAssetName and calls
+            // SetDnaTypeHash — both are required for correct recipe serialization.
+            // _dnaAsset is a public field on DynamicUMADnaBase, but bypassing the setter leaves
+            // dnaAssetName unset so deserialization fails. Use the property setter via reflection.
+            bool assetAssigned = false;
+            Type currentType = dynamicDnaType;
+            while (currentType != null && !assetAssigned)
+            {
+                PropertyInfo dnaAssetProp = currentType.GetProperty(
+                    "dnaAsset",
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (dnaAssetProp != null && dnaAssetProp.CanWrite)
+                {
+                    try
+                    {
+                        dnaAssetProp.SetValue(dna, dynamicDnaAsset, null);
+                        assetAssigned = true;
+                        Debug.Log("[UMAConverter] Set dnaAsset property on DynamicUMADna instance.");
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[UMAConverter] dnaAsset property setter threw: " + e.Message);
+                    }
+                }
+                currentType = currentType.BaseType;
+            }
+
+            if (!assetAssigned)
+            {
+                // Last-resort: set the public backing field and dnaAssetName field directly.
+                FieldInfo backingField = dynamicDnaType.GetField("_dnaAsset", BindingFlags.Public | BindingFlags.Instance)
+                    ?? dynamicDnaType.GetField("_dnaAsset", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (backingField == null)
+                {
+                    // Walk base types
+                    Type bt = dynamicDnaType.BaseType;
+                    while (bt != null && backingField == null)
+                    {
+                        backingField = bt.GetField("_dnaAsset",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                        bt = bt.BaseType;
+                    }
+                }
+                if (backingField != null) backingField.SetValue(dna, dynamicDnaAsset);
+
+                FieldInfo nameField = dynamicDnaType.GetField("dnaAssetName",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (nameField == null)
+                {
+                    Type bt = dynamicDnaType.BaseType;
+                    while (bt != null && nameField == null)
+                    {
+                        nameField = bt.GetField("dnaAssetName",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                        bt = bt.BaseType;
+                    }
+                }
+                if (nameField != null) nameField.SetValue(dna, dynamicDnaAsset.name);
+            }
+
+            try
+            {
+                recipe.AddDna(dna);
+                Debug.Log("[UMAConverter] Added DynamicUMADna to race text recipe: typeHash=" + dnaTypeHash + ", asset='" + dynamicDnaAsset.name + "'.");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[UMAConverter] AddDna failed for race text recipe: " + e.Message);
+            }
+        }
+
         private bool TryAssignRaceDnaConverter(RaceData raceData, ScriptableObject controller)
         {
             if (raceData == null || controller == null)
@@ -2822,17 +2931,21 @@ namespace UMAConverter
             }
 
             SerializedObject raceDataSO = new SerializedObject(raceData);
-            string[] candidateProperties = new string[]
+
+            // _dnaConverterList is a DNAConverterList wrapper; its internal list is at _dnaConverterList._converters.
+            string[] candidatePaths = new string[]
             {
+                "_dnaConverterList._converters",
+                "dnaConverterList._converters",
                 "dnaConverterList",
                 "_dnaConverterList",
                 "dnaConverters",
                 "_dnaConverters"
             };
 
-            for (int propertyIndex = 0; propertyIndex < candidateProperties.Length; propertyIndex++)
+            for (int propertyIndex = 0; propertyIndex < candidatePaths.Length; propertyIndex++)
             {
-                SerializedProperty property = raceDataSO.FindProperty(candidateProperties[propertyIndex]);
+                SerializedProperty property = raceDataSO.FindProperty(candidatePaths[propertyIndex]);
                 if (property == null || !property.isArray)
                 {
                     continue;
@@ -2858,6 +2971,33 @@ namespace UMAConverter
 
                 raceDataSO.ApplyModifiedPropertiesWithoutUndo();
                 EditorUtility.SetDirty(raceData);
+                Debug.Log("[UMAConverter] DNA converter controller linked to RaceData via serialized property: path='" + candidatePaths[propertyIndex] + "'.");
+                return true;
+            }
+
+            // Fallback: reflection-based direct field assignment when SerializedObject property search fails.
+            FieldInfo[] allFields = raceData.GetType().GetFields(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            foreach (FieldInfo field in allFields)
+            {
+                if (!field.FieldType.IsArray) continue;
+                if (field.Name.IndexOf("dnaConverter", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                Type elementType = field.FieldType.GetElementType();
+                if (elementType == null || !elementType.IsAssignableFrom(controller.GetType())) continue;
+
+                Array current = field.GetValue(raceData) as Array;
+                int len = current != null ? current.Length : 0;
+                for (int i = 0; i < len; i++)
+                {
+                    if (ReferenceEquals(current.GetValue(i), controller)) return true;
+                }
+
+                Array newArr = Array.CreateInstance(elementType, len + 1);
+                if (current != null) Array.Copy(current, newArr, len);
+                newArr.SetValue(controller, len);
+                field.SetValue(raceData, newArr);
+                EditorUtility.SetDirty(raceData);
+                Debug.Log("[UMAConverter] DNA converter controller linked to RaceData via reflection: field='" + field.Name + "'.");
                 return true;
             }
 
