@@ -1292,6 +1292,11 @@ namespace UMAConverter
             int index = 0;
             foreach (UMAData_RaceSlots raceSlot in raceSlots)
             {
+                if (raceSlot.slot == null)
+                {
+                    Debug.LogWarning("[UMAConverter] Skipping null slot in TextRecipe creation — slot asset was not generated.");
+                    continue;
+                }
                 SlotData slotData = new SlotData(raceSlot.slot);
 
                 if (raceSlot.overlays != null && raceSlot.overlays.Count > 0)
