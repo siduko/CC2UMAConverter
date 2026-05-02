@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.Build;
 namespace UMAConverter
 {
     public class UMAConverterWindow : EditorWindow
@@ -72,7 +73,8 @@ namespace UMAConverter
         private void UpdateScriptingSymbol(string symbol, bool enable)
         {
             // Hole die aktuellen Scripting Define Symbols
-            var symbols = PlayerSettings.GetScriptingDefineSymbolsForGroup(EditorUserBuildSettings.selectedBuildTargetGroup);
+            var namedBuildTarget = NamedBuildTarget.FromBuildTargetGroup(EditorUserBuildSettings.selectedBuildTargetGroup);
+            var symbols = PlayerSettings.GetScriptingDefineSymbols(namedBuildTarget);
 
             // Pr�fe, ob das Symbol bereits gesetzt ist
             if (enable && !symbols.Contains(symbol))
@@ -87,12 +89,13 @@ namespace UMAConverter
             }
 
             // Aktualisiere die Scripting Define Symbols
-            PlayerSettings.SetScriptingDefineSymbolsForGroup(EditorUserBuildSettings.selectedBuildTargetGroup, symbols);
+            PlayerSettings.SetScriptingDefineSymbols(namedBuildTarget, symbols);
         }
         private bool CheckScriptingSymbol(string symbol)
         {
             // Hole die aktuellen Scripting Define Symbols
-            var symbols = PlayerSettings.GetScriptingDefineSymbolsForGroup(EditorUserBuildSettings.selectedBuildTargetGroup);
+            var namedBuildTarget = NamedBuildTarget.FromBuildTargetGroup(EditorUserBuildSettings.selectedBuildTargetGroup);
+            var symbols = PlayerSettings.GetScriptingDefineSymbols(namedBuildTarget);
 
             // Pr�fe, ob das Symbol gesetzt ist
             return symbols.Contains(symbol);
