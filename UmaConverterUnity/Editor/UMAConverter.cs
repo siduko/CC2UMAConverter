@@ -1572,7 +1572,6 @@ namespace UMAConverter
             if (existing != null)
             {
                 TryAssignDnaAssetToController(existing, dynamicDnaAsset, raceName);
-                EnsureStartingBonePosePlugin(existing, null, raceName, null);
                 return existing;
             }
 
@@ -1610,22 +1609,11 @@ namespace UMAConverter
                     "UMA.CharacterSystem.SkeletonDNAConverterPlugin",
                     "SkeletonDNAConverterPlugin");
 
-                Type bonePosePluginType = FindTypeByName(
-                    "UMA.PoseTools.BonePoseDNAConverterPlugin",
-                    "BonePoseDNAConverterPlugin");
-
                 ScriptableObject skeletonPlugin = CreateControllerPluginAsset(controller, skeletonPluginType, "SkeletonDNAConverters");
                 if (skeletonPlugin != null)
                 {
                     plugins.Add(skeletonPlugin);
                     Debug.Log("[UMAConverter] Created empty SkeletonDNAConverters plugin.");
-                }
-
-                ScriptableObject bonePosePlugin = CreateControllerPluginAsset(controller, bonePosePluginType, "BonePoseDNAConverters");
-                if (bonePosePlugin != null)
-                {
-                    plugins.Add(bonePosePlugin);
-                    Debug.Log("[UMAConverter] Created empty BonePoseDNAConverters plugin.");
                 }
             }
 
@@ -1655,8 +1643,6 @@ namespace UMAConverter
                 Debug.LogWarning("[UMAConverter] Dynamic DNA asset could not be assigned to generated DNAConverterController for race '" + raceName + "'.");
             }
 
-            EnsureStartingBonePosePlugin(controller, plugins, raceName, referenceController);
-
             controllerSO.ApplyModifiedPropertiesWithoutUndo();
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssetIfDirty(controller);
@@ -1666,196 +1652,298 @@ namespace UMAConverter
             return controller;
         }
 
-        private void EnsureStartingBonePosePlugin(ScriptableObject controller, List<ScriptableObject> plugins, string raceName, ScriptableObject referenceController)
+        private bool TryAssignDnaAssetToController(ScriptableObject controller, UnityEngine.Object dnaAsset, string raceName)
         {
             if (controller == null)
             {
-                return;
+                return false;
             }
 
-            UMABonePose startingPose = GenerateDynamicDnaStartingPose(raceName);
-            if (startingPose == null)
+            SerializedObject controllerSO = new SerializedObject(controller);
+            SerializedProperty dnaAssetProperty = controllerSO.FindProperty("_dnaAsset");
+            if (dnaAssetProperty == null)
             {
-                Debug.LogWarning("[UMAConverter] Dynamic DNA starting pose generation failed for race '" + raceName + "'.");
-                return;
+                return false;
             }
 
-            ScriptableObject bonePosePlugin = FindBonePosePlugin(controller, plugins);
-            if (bonePosePlugin == null)
+            if (dnaAsset == null)
             {
-                Type bonePosePluginType = FindTypeByName(
-                    "UMA.PoseTools.BonePoseDNAConverterPlugin",
-                    "BonePoseDNAConverterPlugin");
-
-                bonePosePlugin = CreateControllerPluginAsset(controller, bonePosePluginType, "BonePoseDNAConverters");
-                if (bonePosePlugin == null)
-                {
-                    Debug.LogWarning("[UMAConverter] BonePoseDNAConverterPlugin type was not found. Starting pose could not be assigned for race '" + raceName + "'.");
-                    return;
-                }
-
-                if (plugins != null)
-                {
-                    plugins.Add(bonePosePlugin);
-                }
+                dnaAsset = FindBestMatchingDnaAsset(raceName);
             }
 
-            SerializedObject pluginSO = new SerializedObject(bonePosePlugin);
-            SerializedProperty convertersProperty = pluginSO.FindProperty("_poseDNAConverters");
-            if (convertersProperty == null || !convertersProperty.isArray)
+            if (dnaAsset == null)
             {
-                Debug.LogWarning("[UMAConverter] BonePoseDNAConverterPlugin did not expose a _poseDNAConverters array. Starting pose could not be assigned for race '" + raceName + "'.");
-                return;
+                return false;
             }
 
-            int targetIndex = FindStartingPoseConverterIndex(convertersProperty);
-            if (targetIndex < 0)
-            {
-                targetIndex = convertersProperty.arraySize;
-                convertersProperty.InsertArrayElementAtIndex(targetIndex);
-            }
-
-            SerializedProperty converterProperty = convertersProperty.GetArrayElementAtIndex(targetIndex);
-            SerializedProperty poseProperty = converterProperty.FindPropertyRelative("_poseToApply");
-            if (poseProperty != null)
-            {
-                poseProperty.objectReferenceValue = startingPose;
-            }
-
-            SerializedProperty startingWeightProperty = converterProperty.FindPropertyRelative("_startingPoseWeight");
-            if (startingWeightProperty != null)
-            {
-                startingWeightProperty.floatValue = 1f;
-            }
-
-            SerializedProperty modifyingDnaProperty = converterProperty.FindPropertyRelative("_modifyingDNA");
-            if (modifyingDnaProperty != null)
-            {
-                SerializedProperty evaluatorsProperty = modifyingDnaProperty.FindPropertyRelative("_dnaEvaluators");
-                if (evaluatorsProperty != null && evaluatorsProperty.isArray)
-                {
-                    evaluatorsProperty.arraySize = 0;
-                }
-
-                SerializedProperty aggregationMethodProperty = modifyingDnaProperty.FindPropertyRelative("_aggregationMethod");
-                if (aggregationMethodProperty != null)
-                {
-                    aggregationMethodProperty.intValue = 0;
-                }
-            }
-
-            pluginSO.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(bonePosePlugin);
-            AssetDatabase.SaveAssetIfDirty(bonePosePlugin);
-
-            Debug.Log("[UMAConverter] Starting bone pose assigned: race='" + raceName + "', pose='" + startingPose.name + "', plugin='" + bonePosePlugin.name + "'.");
-
-            PopulateSkeletonModifiersFromStartingPose(controller, plugins, startingPose, referenceController);
+            dnaAssetProperty.objectReferenceValue = dnaAsset;
+            controllerSO.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssetIfDirty(controller);
+            return true;
         }
 
-        private void PopulateSkeletonModifiersFromStartingPose(ScriptableObject controller, List<ScriptableObject> plugins, UMABonePose startingPose, ScriptableObject referenceController)
+        private ScriptableObject CreateControllerPluginAsset(ScriptableObject controller, Type pluginType, string pluginName)
         {
-            if (controller == null || startingPose == null || startingPose.poses == null || startingPose.poses.Length == 0)
+            if (controller == null || pluginType == null)
             {
-                return;
+                return null;
             }
 
-            ScriptableObject skeletonPlugin = FindSkeletonPlugin(controller, plugins);
-            if (skeletonPlugin == null)
+            ScriptableObject plugin = ScriptableObject.CreateInstance(pluginType);
+            if (plugin == null)
             {
-                return;
+                return null;
             }
 
-            SerializedObject skeletonPluginSO = new SerializedObject(skeletonPlugin);
-            SerializedProperty modifiersProperty = skeletonPluginSO.FindProperty("_skeletonModifiers");
+            plugin.name = pluginName;
+            AssetDatabase.AddObjectToAsset(plugin, controller);
+
+            SerializedObject pluginSO = new SerializedObject(plugin);
+            SerializedProperty converterControllerProperty = pluginSO.FindProperty("_converterController");
+            if (converterControllerProperty != null)
+            {
+                converterControllerProperty.objectReferenceValue = controller;
+                pluginSO.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            EditorUtility.SetDirty(plugin);
+            return plugin;
+        }
+
+        private ScriptableObject FindReferenceDnaConverterController(Type controllerType)
+        {
+            if (controllerType == null)
+            {
+                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: controllerType is null.");
+                return null;
+            }
+
+            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Looking for reference controller of type '" + controllerType.Name + "'.");
+
+            ScriptableObject configuredReference = UMAConverterSettings.Instance.ReferenceDnaConverterController;
+            if (configuredReference != null)
+            {
+                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Found configured reference: '" + configuredReference.name + "' (type: " + configuredReference.GetType().Name + ")");
+                if (controllerType.IsInstanceOfType(configuredReference))
+                {
+                    Debug.Log("[UMAConverter] Using configured Reference DNA Converter Controller: " + AssetDatabase.GetAssetPath(configuredReference));
+                    return configuredReference;
+                }
+
+                Debug.LogWarning("[UMAConverter] UMAConverterSettings Reference DNA Converter Controller is set but has an incompatible type. Falling back to auto-detection.");
+            }
+            else
+            {
+                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: No configured reference in settings. Auto-detecting...");
+            }
+
+            string[] controllerGuids = AssetDatabase.FindAssets("t:" + controllerType.Name);
+            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Auto-search found " + controllerGuids.Length + " assets of type '" + controllerType.Name + "'.");
+            
+            foreach (string guid in controllerGuids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                ScriptableObject asset = AssetDatabase.LoadMainAssetAtPath(path) as ScriptableObject;
+                if (asset != null && controllerType.IsInstanceOfType(asset))
+                {
+                    Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Candidate: " + asset.name + " at " + path);
+                    if (asset.name.IndexOf("HumanFemale", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        Debug.Log("[UMAConverter] Auto-detected Reference DNA Converter Controller (HumanFemale): " + path);
+                        return asset;
+                    }
+                }
+            }
+
+            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: No HumanFemale reference found. Will use default plugin generation.");
+            return null;
+        }
+
+        private List<ScriptableObject> CloneControllerPluginsFromReference(ScriptableObject targetController, ScriptableObject referenceController)
+        {
+            List<ScriptableObject> clonedPlugins = new List<ScriptableObject>();
+            if (targetController == null || referenceController == null)
+            {
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: targetController or referenceController is null. No plugins cloned.");
+                return clonedPlugins;
+            }
+
+            SerializedObject referenceSO = new SerializedObject(referenceController);
+            SerializedProperty referencePluginsProperty = referenceSO.FindProperty("_plugins");
+            if (referencePluginsProperty == null || !referencePluginsProperty.isArray)
+            {
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Reference controller has no _plugins array.");
+                return clonedPlugins;
+            }
+
+            Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Found " + referencePluginsProperty.arraySize + " plugins in reference controller.");
+
+            for (int i = 0; i < referencePluginsProperty.arraySize; i++)
+            {
+                SerializedProperty pluginProperty = referencePluginsProperty.GetArrayElementAtIndex(i);
+                ScriptableObject sourcePlugin = pluginProperty.objectReferenceValue as ScriptableObject;
+                if (sourcePlugin == null)
+                {
+                    Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Plugin at index " + i + " is null. Skipping.");
+                    continue;
+                }
+
+                Type sourcePluginType = sourcePlugin.GetType();
+
+                // Skip BonePoseDNAConverterPlugin — we do not generate starting poses.
+                if (string.Equals(sourcePluginType.Name, "BonePoseDNAConverterPlugin", StringComparison.Ordinal))
+                {
+                    Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Skipping BonePoseDNAConverterPlugin.");
+                    continue;
+                }
+
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Cloning plugin '" + sourcePlugin.name + "' of type '" + sourcePluginType.Name + "'.");
+
+                ScriptableObject clonedPlugin = ScriptableObject.CreateInstance(sourcePluginType);
+                if (clonedPlugin == null)
+                {
+                    Debug.LogWarning("[UMAConverter] CloneControllerPluginsFromReference: Failed to instantiate plugin type '" + sourcePluginType.Name + "'.");
+                    continue;
+                }
+
+                clonedPlugin.name = sourcePlugin.name;
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Created new plugin instance, copying serialized data...");
+                
+                EditorUtility.CopySerialized(sourcePlugin, clonedPlugin);
+                
+                AssetDatabase.AddObjectToAsset(clonedPlugin, targetController);
+
+                SerializedObject sourcePluginSO = new SerializedObject(sourcePlugin);
+                SerializedObject clonedPluginSO = new SerializedObject(clonedPlugin);
+                
+                CopyNestedArrayProperties(sourcePluginSO, clonedPluginSO);
+
+                SerializedProperty converterControllerProperty = clonedPluginSO.FindProperty("_converterController");
+                if (converterControllerProperty != null)
+                {
+                    converterControllerProperty.objectReferenceValue = targetController;
+                }
+
+                // For SkeletonDNAConverterPlugin, remap modifier bone names from UMA reference
+                // names (e.g. "HeadAdjust", "LeftOuterBreast") to the DAZ/Genesis3 names that
+                // actually exist in the target rig (e.g. "head", "lPectoral").
+                if (string.Equals(sourcePluginType.Name, "SkeletonDNAConverterPlugin", StringComparison.Ordinal))
+                {
+                    RemapSkeletonModifierNamesToRig(clonedPluginSO);
+                }
+
+                clonedPluginSO.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(clonedPlugin);
+                
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Copied nested arrays from source plugin.");
+                
+                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Successfully cloned plugin '" + clonedPlugin.name + "' and added to target controller.");
+                clonedPlugins.Add(clonedPlugin);
+            }
+
+            return clonedPlugins;
+        }
+
+        /// <summary>
+        /// Remaps skeleton modifier bone names from the UMA reference rig (e.g. "HeadAdjust",
+        /// "LeftOuterBreast") to the DAZ/Genesis3 names that exist in the target rig (e.g.
+        /// "head", "lPectoral"), using the reverse of <see cref="boneNameAliasMap"/>.
+        /// Also updates the _hash field to match the new name.
+        /// </summary>
+        private void RemapSkeletonModifierNamesToRig(SerializedObject pluginSO)
+        {
+            // Build reverse map: UMA modifier name → DAZ bone name (first match wins).
+            Dictionary<string, string> umaNameToDazName =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, string[]> entry in boneNameAliasMap)
+            {
+                string dazName = entry.Key;
+                foreach (string umaName in entry.Value)
+                {
+                    if (!umaNameToDazName.ContainsKey(umaName))
+                    {
+                        umaNameToDazName[umaName] = dazName;
+                    }
+                }
+            }
+
+            SerializedProperty modifiersProperty = pluginSO.FindProperty("_skeletonModifiers");
             if (modifiersProperty == null || !modifiersProperty.isArray)
             {
                 return;
             }
 
-            if (modifiersProperty.arraySize > 0)
+            int remappedCount = 0;
+            for (int i = 0; i < modifiersProperty.arraySize; i++)
+            {
+                SerializedProperty modifier = modifiersProperty.GetArrayElementAtIndex(i);
+                SerializedProperty hashNameProp = modifier.FindPropertyRelative("_hashName");
+                if (hashNameProp == null)
+                {
+                    continue;
+                }
+
+                string umaName = hashNameProp.stringValue;
+                string dazName;
+                if (!umaNameToDazName.TryGetValue(umaName, out dazName))
+                {
+                    continue;
+                }
+
+                hashNameProp.stringValue = dazName;
+
+                SerializedProperty hashProp = modifier.FindPropertyRelative("_hash");
+                if (hashProp != null)
+                {
+                    hashProp.intValue = UMAUtils.StringToHash(dazName);
+                }
+
+                remappedCount++;
+                Debug.Log("[UMAConverter] RemapSkeletonModifierNamesToRig: '" + umaName + "' → '" + dazName + "'.");
+            }
+
+            Debug.Log("[UMAConverter] RemapSkeletonModifierNamesToRig: remapped " + remappedCount + " of " + modifiersProperty.arraySize + " modifiers.");
+        }
+
+        private void CopyNestedArrayProperties(SerializedObject sourceObject, SerializedObject targetObject)
+        {
+            if (sourceObject == null || targetObject == null)
             {
                 return;
             }
 
-            int dnaTypeHash = GetDnaTypeHashFromController(controller);
+            string[] criticalArrayProperties = new string[] { "_skeletonModifiers", "_poseDNAConverters", "_modifyingDNA", "_dnaEvaluators" };
 
-            // Build reference modifier lookup: name -> first matching SerializedProperty copy.
-            // Case-insensitive so "Head" matches "head", "LeftArm" matches "leftArm", etc.
-            Dictionary<string, SerializedProperty> refModifiersByName =
-                new Dictionary<string, SerializedProperty>(StringComparer.OrdinalIgnoreCase);
-
-            SerializedObject refPluginSO = null;
-            ScriptableObject refSkeletonPlugin = referenceController != null ? FindSkeletonPlugin(referenceController, null) : null;
-            if (refSkeletonPlugin != null)
+            foreach (string arrayPropName in criticalArrayProperties)
             {
-                refPluginSO = new SerializedObject(refSkeletonPlugin);
-                SerializedProperty refModifiers = refPluginSO.FindProperty("_skeletonModifiers");
-                if (refModifiers != null && refModifiers.isArray)
+                SerializedProperty sourceProp = sourceObject.FindProperty(arrayPropName);
+                SerializedProperty targetProp = targetObject.FindProperty(arrayPropName);
+
+                if (sourceProp == null || targetProp == null)
                 {
-                    for (int i = 0; i < refModifiers.arraySize; i++)
-                    {
-                        SerializedProperty refMod = refModifiers.GetArrayElementAtIndex(i).Copy();
-                        SerializedProperty refHashNameProp = refMod.FindPropertyRelative("_hashName");
-                        if (refHashNameProp == null) continue;
-                        string name = refHashNameProp.stringValue;
-                        if (string.IsNullOrEmpty(name)) continue;
-                        // Keep only the first entry per name — additional entries for the same
-                        // bone (different _property values) would need separate passes.
-                        if (!refModifiersByName.ContainsKey(name))
-                            refModifiersByName[name] = refMod;
-                    }
+                    continue;
+                }
+
+                if (!sourceProp.isArray || !targetProp.isArray)
+                {
+                    continue;
+                }
+
+                Debug.Log("[UMAConverter] CopyNestedArrayProperties: Copying array '" + arrayPropName + "' with " + sourceProp.arraySize + " elements.");
+
+                targetProp.arraySize = sourceProp.arraySize;
+
+                for (int i = 0; i < sourceProp.arraySize; i++)
+                {
+                    SerializedProperty sourceElement = sourceProp.GetArrayElementAtIndex(i);
+                    SerializedProperty targetElement = targetProp.GetArrayElementAtIndex(i);
+
+                    CopySerializedPropertyValue(sourceElement, targetElement);
                 }
             }
 
-            int count = startingPose.poses.Length;
-            modifiersProperty.arraySize = count;
-            int matchedCount = 0;
-
-            for (int i = 0; i < count; i++)
-            {
-                UMABonePose.PoseBone poseBone = startingPose.poses[i];
-                SerializedProperty modifier = modifiersProperty.GetArrayElementAtIndex(i);
-
-                // Find best reference modifier: exact name first, then alias mapping.
-                SerializedProperty refModifier = FindBestReferenceModifier(poseBone.bone, refModifiersByName);
-
-                if (refModifier != null)
-                {
-                    CopySerializedPropertyValue(refModifier, modifier);
-                    matchedCount++;
-                }
-                else
-                {
-                    SerializedProperty propertyTypeProp = modifier.FindPropertyRelative("_property");
-                    if (propertyTypeProp != null) propertyTypeProp.intValue = 2; // Scale
-                    SetSkeletonModifierAxisValues(modifier, "_valuesX", 1f, 1f, 1f);
-                    SetSkeletonModifierAxisValues(modifier, "_valuesY", 1f, 1f, 1f);
-                    SetSkeletonModifierAxisValues(modifier, "_valuesZ", 1f, 1f, 1f);
-                }
-
-                // Always stamp the pose bone's own name/hash so the modifier targets
-                // the correct bone in this rig, not the reference rig's bone.
-                SerializedProperty hashNameProp = modifier.FindPropertyRelative("_hashName");
-                if (hashNameProp != null) hashNameProp.stringValue = poseBone.bone;
-
-                SerializedProperty hashProp = modifier.FindPropertyRelative("_hash");
-                if (hashProp != null) hashProp.intValue = poseBone.hash;
-
-                // Stamp the newly-generated DNA asset's type hash.
-                SerializedProperty umaDnaProp = modifier.FindPropertyRelative("_umaDNA");
-                if (umaDnaProp != null)
-                {
-                    SerializedProperty dnaTypeHashProp = umaDnaProp.FindPropertyRelative("dnaTypeHash");
-                    if (dnaTypeHashProp != null) dnaTypeHashProp.intValue = dnaTypeHash;
-                }
-            }
-
-            skeletonPluginSO.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(skeletonPlugin);
-            AssetDatabase.SaveAssetIfDirty(skeletonPlugin);
-
-            Debug.Log("[UMAConverter] Populated " + count + " skeleton modifiers (" + matchedCount + " from reference, " + (count - matchedCount) + " identity fallback) in '" + skeletonPlugin.name + "'.");
+            targetObject.ApplyModifiedPropertiesWithoutUndo();
         }
 
         /// <summary>
@@ -2023,445 +2111,6 @@ namespace UMAConverter
 
             // DynamicDNAAsset computes its hash at runtime from its asset name
             return UMAUtils.StringToHash(dnaAsset.name);
-        }
-
-        private ScriptableObject FindBonePosePlugin(ScriptableObject controller, List<ScriptableObject> plugins)
-        {
-            if (plugins != null)
-            {
-                for (int i = 0; i < plugins.Count; i++)
-                {
-                    ScriptableObject candidate = plugins[i];
-                    if (candidate != null && string.Equals(candidate.GetType().Name, "BonePoseDNAConverterPlugin", StringComparison.Ordinal))
-                    {
-                        return candidate;
-                    }
-                }
-            }
-
-            SerializedObject controllerSO = new SerializedObject(controller);
-            SerializedProperty pluginsProperty = controllerSO.FindProperty("_plugins");
-            if (pluginsProperty == null || !pluginsProperty.isArray)
-            {
-                return null;
-            }
-
-            for (int i = 0; i < pluginsProperty.arraySize; i++)
-            {
-                ScriptableObject candidate = pluginsProperty.GetArrayElementAtIndex(i).objectReferenceValue as ScriptableObject;
-                if (candidate != null && string.Equals(candidate.GetType().Name, "BonePoseDNAConverterPlugin", StringComparison.Ordinal))
-                {
-                    return candidate;
-                }
-            }
-
-            return null;
-        }
-
-        private int FindStartingPoseConverterIndex(SerializedProperty convertersProperty)
-        {
-            for (int i = 0; i < convertersProperty.arraySize; i++)
-            {
-                SerializedProperty converterProperty = convertersProperty.GetArrayElementAtIndex(i);
-                SerializedProperty startingWeightProperty = converterProperty.FindPropertyRelative("_startingPoseWeight");
-                SerializedProperty poseProperty = converterProperty.FindPropertyRelative("_poseToApply");
-
-                UnityEngine.Object poseAsset = poseProperty != null ? poseProperty.objectReferenceValue : null;
-                string poseName = poseAsset != null ? poseAsset.name : string.Empty;
-                if ((startingWeightProperty != null && startingWeightProperty.floatValue > 0f) ||
-                    poseName.IndexOf("DynamicDNAStartingPose", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    return i;
-                }
-            }
-
-            return -1;
-        }
-
-        private UMABonePose GenerateDynamicDnaStartingPose(string raceName)
-        {
-            string posePath = workingDirectory + "/Race/" + raceName + "DynamicDNAStartingPose.asset";
-            UMABonePose startingPose = AssetDatabase.LoadAssetAtPath<UMABonePose>(posePath);
-            bool poseAlreadyExists = startingPose != null;
-            if (startingPose == null)
-            {
-                startingPose = ScriptableObject.CreateInstance<UMABonePose>();
-            }
-
-            if (startingPose == null)
-            {
-                return null;
-            }
-
-            startingPose.name = raceName + "DynamicDNAStartingPose";
-            PopulateStartingBonePose(startingPose);
-
-            if (poseAlreadyExists)
-            {
-                EditorUtility.SetDirty(startingPose);
-                AssetDatabase.SaveAssetIfDirty(startingPose);
-            }
-            else
-            {
-                AssetDatabase.CreateAsset(startingPose, posePath);
-                AssetDatabase.SaveAssets();
-            }
-
-            Debug.Log("[UMAConverter] Dynamic DNA starting pose " + (poseAlreadyExists ? "updated" : "created") + ": path='" + posePath + "', poses=" + (startingPose.poses != null ? startingPose.poses.Length : 0) + ".");
-            return startingPose;
-        }
-
-        private void PopulateStartingBonePose(UMABonePose bonePose)
-        {
-            if (bonePose == null)
-            {
-                return;
-            }
-
-            List<Transform> boneTransforms = CollectStartingPoseTransforms();
-            List<UMABonePose.PoseBone> poseBones = new List<UMABonePose.PoseBone>(boneTransforms.Count);
-
-            for (int i = 0; i < boneTransforms.Count; i++)
-            {
-                Transform boneTransform = boneTransforms[i];
-                if (boneTransform == null)
-                {
-                    continue;
-                }
-
-                UMABonePose.PoseBone poseBone = new UMABonePose.PoseBone();
-                poseBone.bone = boneTransform.name;
-                poseBone.hash = UMAUtils.StringToHash(boneTransform.name);
-                poseBone.position = boneTransform.localPosition;
-                poseBone.rotation = boneTransform.localRotation;
-                poseBone.scale = boneTransform.localScale;
-                poseBone.category = string.Empty;
-                poseBones.Add(poseBone);
-            }
-
-            bonePose.poses = poseBones.ToArray();
-        }
-
-        private List<Transform> CollectStartingPoseTransforms()
-        {
-            HashSet<Transform> transforms = new HashSet<Transform>();
-            if (model == null)
-            {
-                return new List<Transform>();
-            }
-
-            SkinnedMeshRenderer[] renderers = model.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            for (int i = 0; i < renderers.Length; i++)
-            {
-                SkinnedMeshRenderer renderer = renderers[i];
-                if (renderer == null)
-                {
-                    continue;
-                }
-
-                AddTransformChain(renderer.rootBone, transforms);
-
-                Transform[] rendererBones = renderer.bones;
-                if (rendererBones == null)
-                {
-                    continue;
-                }
-
-                for (int boneIndex = 0; boneIndex < rendererBones.Length; boneIndex++)
-                {
-                    AddTransformChain(rendererBones[boneIndex], transforms);
-                }
-            }
-
-            if (transforms.Count == 0)
-            {
-                Transform[] allTransforms = model.GetComponentsInChildren<Transform>(true);
-                for (int i = 0; i < allTransforms.Length; i++)
-                {
-                    Transform transform = allTransforms[i];
-                    if (transform != null && transform != model.transform)
-                    {
-                        transforms.Add(transform);
-                    }
-                }
-            }
-
-            return transforms
-                .Where(transform => transform != null && transform != model.transform)
-                .OrderBy(transform => GetTransformHierarchyPath(transform), StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        private void AddTransformChain(Transform leaf, HashSet<Transform> transforms)
-        {
-            Transform current = leaf;
-            while (current != null && current != model.transform)
-            {
-                transforms.Add(current);
-                current = current.parent;
-            }
-        }
-
-        private string GetTransformHierarchyPath(Transform transform)
-        {
-            if (transform == null)
-            {
-                return string.Empty;
-            }
-
-            List<string> segments = new List<string>();
-            Transform current = transform;
-            while (current != null && current != model.transform)
-            {
-                segments.Add(current.name);
-                current = current.parent;
-            }
-
-            segments.Reverse();
-            return string.Join("/", segments.ToArray());
-        }
-
-        private bool TryAssignDnaAssetToController(ScriptableObject controller, UnityEngine.Object dnaAsset, string raceName)
-        {
-            if (controller == null)
-            {
-                return false;
-            }
-
-            SerializedObject controllerSO = new SerializedObject(controller);
-            SerializedProperty dnaAssetProperty = controllerSO.FindProperty("_dnaAsset");
-            if (dnaAssetProperty == null)
-            {
-                return false;
-            }
-
-            if (dnaAsset == null)
-            {
-                dnaAsset = FindBestMatchingDnaAsset(raceName);
-            }
-
-            if (dnaAsset == null)
-            {
-                return false;
-            }
-
-            dnaAssetProperty.objectReferenceValue = dnaAsset;
-            controllerSO.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssetIfDirty(controller);
-            return true;
-        }
-
-        private ScriptableObject CreateControllerPluginAsset(ScriptableObject controller, Type pluginType, string pluginName)
-        {
-            if (controller == null || pluginType == null)
-            {
-                return null;
-            }
-
-            ScriptableObject plugin = ScriptableObject.CreateInstance(pluginType);
-            if (plugin == null)
-            {
-                return null;
-            }
-
-            plugin.name = pluginName;
-            AssetDatabase.AddObjectToAsset(plugin, controller);
-
-            SerializedObject pluginSO = new SerializedObject(plugin);
-            SerializedProperty converterControllerProperty = pluginSO.FindProperty("_converterController");
-            if (converterControllerProperty != null)
-            {
-                converterControllerProperty.objectReferenceValue = controller;
-                pluginSO.ApplyModifiedPropertiesWithoutUndo();
-            }
-
-            EditorUtility.SetDirty(plugin);
-            return plugin;
-        }
-
-        private ScriptableObject FindReferenceDnaConverterController(Type controllerType)
-        {
-            if (controllerType == null)
-            {
-                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: controllerType is null.");
-                return null;
-            }
-
-            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Looking for reference controller of type '" + controllerType.Name + "'.");
-
-            ScriptableObject configuredReference = UMAConverterSettings.Instance.ReferenceDnaConverterController;
-            if (configuredReference != null)
-            {
-                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Found configured reference: '" + configuredReference.name + "' (type: " + configuredReference.GetType().Name + ")");
-                if (controllerType.IsInstanceOfType(configuredReference))
-                {
-                    Debug.Log("[UMAConverter] Using configured Reference DNA Converter Controller: " + AssetDatabase.GetAssetPath(configuredReference));
-                    return configuredReference;
-                }
-
-                Debug.LogWarning("[UMAConverter] UMAConverterSettings Reference DNA Converter Controller is set but has an incompatible type. Falling back to auto-detection.");
-            }
-            else
-            {
-                Debug.Log("[UMAConverter] FindReferenceDnaConverterController: No configured reference in settings. Auto-detecting...");
-            }
-
-            string[] controllerGuids = AssetDatabase.FindAssets("t:" + controllerType.Name);
-            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Auto-search found " + controllerGuids.Length + " assets of type '" + controllerType.Name + "'.");
-            
-            foreach (string guid in controllerGuids)
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                ScriptableObject asset = AssetDatabase.LoadMainAssetAtPath(path) as ScriptableObject;
-                if (asset != null && controllerType.IsInstanceOfType(asset))
-                {
-                    Debug.Log("[UMAConverter] FindReferenceDnaConverterController: Candidate: " + asset.name + " at " + path);
-                    if (asset.name.IndexOf("HumanFemale", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        Debug.Log("[UMAConverter] Auto-detected Reference DNA Converter Controller (HumanFemale): " + path);
-                        return asset;
-                    }
-                }
-            }
-
-            Debug.Log("[UMAConverter] FindReferenceDnaConverterController: No HumanFemale reference found. Will use default plugin generation.");
-            return null;
-        }
-
-        private List<ScriptableObject> CloneControllerPluginsFromReference(ScriptableObject targetController, ScriptableObject referenceController)
-        {
-            List<ScriptableObject> clonedPlugins = new List<ScriptableObject>();
-            if (targetController == null || referenceController == null)
-            {
-                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: targetController or referenceController is null. No plugins cloned.");
-                return clonedPlugins;
-            }
-
-            SerializedObject referenceSO = new SerializedObject(referenceController);
-            SerializedProperty referencePluginsProperty = referenceSO.FindProperty("_plugins");
-            if (referencePluginsProperty == null || !referencePluginsProperty.isArray)
-            {
-                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Reference controller has no _plugins array.");
-                return clonedPlugins;
-            }
-
-            Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Found " + referencePluginsProperty.arraySize + " plugins in reference controller.");
-
-            for (int i = 0; i < referencePluginsProperty.arraySize; i++)
-            {
-                SerializedProperty pluginProperty = referencePluginsProperty.GetArrayElementAtIndex(i);
-                ScriptableObject sourcePlugin = pluginProperty.objectReferenceValue as ScriptableObject;
-                if (sourcePlugin == null)
-                {
-                    Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Plugin at index " + i + " is null. Skipping.");
-                    continue;
-                }
-
-                Type sourcePluginType = sourcePlugin.GetType();
-                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Cloning plugin '" + sourcePlugin.name + "' of type '" + sourcePluginType.Name + "'.");
-
-                ScriptableObject clonedPlugin = ScriptableObject.CreateInstance(sourcePluginType);
-                if (clonedPlugin == null)
-                {
-                    Debug.LogWarning("[UMAConverter] CloneControllerPluginsFromReference: Failed to instantiate plugin type '" + sourcePluginType.Name + "'.");
-                    continue;
-                }
-
-                clonedPlugin.name = sourcePlugin.name;
-                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Created new plugin instance, copying serialized data...");
-                
-                EditorUtility.CopySerialized(sourcePlugin, clonedPlugin);
-                
-                AssetDatabase.AddObjectToAsset(clonedPlugin, targetController);
-
-                SerializedObject sourcePluginSO = new SerializedObject(sourcePlugin);
-                SerializedObject clonedPluginSO = new SerializedObject(clonedPlugin);
-                
-                CopyNestedArrayProperties(sourcePluginSO, clonedPluginSO);
-                
-                SerializedProperty converterControllerProperty = clonedPluginSO.FindProperty("_converterController");
-                if (converterControllerProperty != null)
-                {
-                    converterControllerProperty.objectReferenceValue = targetController;
-                }
-
-                ClearRigSpecificSkeletonModifiers(clonedPluginSO, clonedPlugin);
-
-                clonedPluginSO.ApplyModifiedPropertiesWithoutUndo();
-                EditorUtility.SetDirty(clonedPlugin);
-                
-                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Copied nested arrays from source plugin.");
-                
-                Debug.Log("[UMAConverter] CloneControllerPluginsFromReference: Successfully cloned plugin '" + clonedPlugin.name + "' and added to target controller.");
-                clonedPlugins.Add(clonedPlugin);
-            }
-
-            return clonedPlugins;
-        }
-
-        private void ClearRigSpecificSkeletonModifiers(SerializedObject pluginSO, ScriptableObject plugin)
-        {
-            if (pluginSO == null || plugin == null)
-            {
-                return;
-            }
-
-            if (!string.Equals(plugin.GetType().Name, "SkeletonDNAConverterPlugin", StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            SerializedProperty skeletonModifiersProperty = pluginSO.FindProperty("_skeletonModifiers");
-            if (skeletonModifiersProperty == null || !skeletonModifiersProperty.isArray || skeletonModifiersProperty.arraySize == 0)
-            {
-                return;
-            }
-
-            int removedModifierCount = skeletonModifiersProperty.arraySize;
-            skeletonModifiersProperty.arraySize = 0;
-
-            Debug.LogWarning("[UMAConverter] Cleared " + removedModifierCount + " cloned skeleton modifiers from '" + plugin.name + "' because reference-controller bone names are rig-specific and cannot be reused safely.");
-        }
-
-        private void CopyNestedArrayProperties(SerializedObject sourceObject, SerializedObject targetObject)
-        {
-            if (sourceObject == null || targetObject == null)
-            {
-                return;
-            }
-
-            string[] criticalArrayProperties = new string[] { "_skeletonModifiers", "_poseDNAConverters", "_modifyingDNA", "_dnaEvaluators" };
-
-            foreach (string arrayPropName in criticalArrayProperties)
-            {
-                SerializedProperty sourceProp = sourceObject.FindProperty(arrayPropName);
-                SerializedProperty targetProp = targetObject.FindProperty(arrayPropName);
-
-                if (sourceProp == null || targetProp == null)
-                {
-                    continue;
-                }
-
-                if (!sourceProp.isArray || !targetProp.isArray)
-                {
-                    continue;
-                }
-
-                Debug.Log("[UMAConverter] CopyNestedArrayProperties: Copying array '" + arrayPropName + "' with " + sourceProp.arraySize + " elements.");
-
-                targetProp.arraySize = sourceProp.arraySize;
-
-                for (int i = 0; i < sourceProp.arraySize; i++)
-                {
-                    SerializedProperty sourceElement = sourceProp.GetArrayElementAtIndex(i);
-                    SerializedProperty targetElement = targetProp.GetArrayElementAtIndex(i);
-
-                    CopySerializedPropertyValue(sourceElement, targetElement);
-                }
-            }
-
-            targetObject.ApplyModifiedPropertiesWithoutUndo();
         }
 
         private UnityEngine.Object GenerateDNARanges(string raceName, ScriptableObject dnaConverterController, UnityEngine.Object dynamicDnaAsset)
