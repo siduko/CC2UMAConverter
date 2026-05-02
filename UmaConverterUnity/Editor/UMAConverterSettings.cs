@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEditor;
 using System.IO;
 using UMA;
+using UMA.PoseTools;
 namespace UMAConverter
 {
     [CreateAssetMenu(fileName = "UMAConverterSettings", menuName = "UMA/Converter Settings")]
@@ -33,6 +34,10 @@ namespace UMAConverter
         private ScriptableObject referenceDnaConverterController;
         [SerializeField]
         private ScriptableObject referenceDynamicDnaRanges;
+        [Header("Expressions")]
+        [Tooltip("When set, pose bone transforms will be copied from this expression set instead of being left as identity. Use an expression set from another character of the same rig type.")]
+        [SerializeField]
+        private UMAExpressionSet referenceExpressionSet;
         public bool removeMeshAfterCreating = false;
 
 #if UMAConverterGCInventory
@@ -88,6 +93,12 @@ namespace UMAConverter
         {
             get { return referenceDynamicDnaRanges; }
             set { referenceDynamicDnaRanges = value; }
+        }
+
+        public UMAExpressionSet ReferenceExpressionSet
+        {
+            get { return referenceExpressionSet; }
+            set { referenceExpressionSet = value; }
         }
 
         private static UMAConverterSettings FindOrCreateInstance()
