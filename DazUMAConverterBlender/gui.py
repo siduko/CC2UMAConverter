@@ -78,18 +78,6 @@ def unregister_json_file_field():
     del bpy.types.Scene.json_file_path
 
 
-def register_import_options():
-    bpy.types.Scene.import_skip_manual_mapping = bpy.props.BoolProperty(
-        name="Skip Manual Mapping",
-        description="Do not show manual mapping dialog before automatic texture setup",
-        default=False,
-    )
-
-
-def unregister_import_options():
-    del bpy.types.Scene.import_skip_manual_mapping
-
-
 def register_race_wizard():
     # Name field for the Race
     bpy.types.Scene.race_name = bpy.props.StringProperty(

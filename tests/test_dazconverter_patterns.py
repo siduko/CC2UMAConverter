@@ -385,59 +385,5 @@ class TestDazConverterPatternConfig(unittest.TestCase):
         # the key "characterski" is gone and "bump" is correctly placed.
         self.assertIn("normal", indexed["characterskin"])
 
-    def test_add_texture_with_manual_fallback_calls_callback_on_failure(self):
-        class MaterialStub:
-            name = "Trim.001"
-
-        calls = []
-
-        def failing_add(*_args):
-            raise RuntimeError("link failure")
-
-        def manual_callback(material, texture_path, texture_type, error_message):
-            calls.append((material.name, texture_path, texture_type, error_message))
-            return True
-
-        result = dazconverter._add_texture_with_manual_fallback(
-            MaterialStub(),
-            "/tmp/s051Shorts05.jpg",
-            "color",
-            skip_manual_mapping=False,
-            manual_mapping_callback=manual_callback,
-            add_texture_func=failing_add,
-        )
-
-        self.assertTrue(result)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], "Trim.001")
-        self.assertEqual(calls[0][2], "color")
-        self.assertIn("link failure", calls[0][3])
-
-    def test_add_texture_with_manual_fallback_skips_when_configured(self):
-        class MaterialStub:
-            name = "Trim.001"
-
-        callback_called = {"value": False}
-
-        def failing_add(*_args):
-            raise RuntimeError("link failure")
-
-        def manual_callback(*_args):
-            callback_called["value"] = True
-            return True
-
-        result = dazconverter._add_texture_with_manual_fallback(
-            MaterialStub(),
-            "/tmp/s051Shorts05.jpg",
-            "color",
-            skip_manual_mapping=True,
-            manual_mapping_callback=manual_callback,
-            add_texture_func=failing_add,
-        )
-
-        self.assertFalse(result)
-        self.assertFalse(callback_called["value"])
-
-
 if __name__ == "__main__":
     unittest.main()

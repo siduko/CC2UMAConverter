@@ -948,35 +948,6 @@ def _add_texture_to_material(material, texture_path, texture_type):
             material.shadow_method = 'HASHED'
 
 
-def _add_texture_with_manual_fallback(
-    material,
-    texture_path,
-    texture_type,
-    skip_manual_mapping=False,
-    manual_mapping_callback=None,
-    add_texture_func=None,
-):
-    add_texture = add_texture_func or _add_texture_to_material
-    try:
-        add_texture(material, texture_path, texture_type)
-        return True
-    except Exception as exc:
-        print(
-            f"  ✗ Failed to add {texture_type} texture '{os.path.basename(texture_path)}' to material '{material.name}': {exc}"
-        )
-        if skip_manual_mapping or manual_mapping_callback is None:
-            return False
-
-        try:
-            return bool(
-                manual_mapping_callback(material, texture_path, texture_type, str(exc))
-            )
-        except Exception as manual_exc:
-            print(
-                f"  ✗ Manual mapping UI failed for material '{material.name}': {manual_exc}"
-            )
-            return False
-
 
 
 def _dump_material_textures(material):
@@ -1034,38 +1005,8 @@ def _derive_texture_pattern_from_material(material):
     return _derive_texture_pattern_from_filename(preferred_path)
 
 
-def get_manual_mapping_candidate():
-    """Return a best-effort texture candidate for pre-setup manual mapping."""
-    for material in bpy.data.materials:
-        texture_paths = _get_material_texture_paths(material)
-        if not texture_paths:
-            continue
-
-        preferred_path = next(
-            (
-                path
-                for path in texture_paths
-                if _classify_texture_filename(path) == "unknown"
-            ),
-            texture_paths[0],
-        )
-        suggested_type = _classify_texture_filename(preferred_path)
-        if suggested_type == "unknown":
-            suggested_type = "color"
-
-        return {
-            "material_name": material.name,
-            "texture_path": preferred_path,
-            "texture_type": suggested_type,
-        }
-
-    return None
-
-
 def setup_daz_materials(
     search_base_path,
-    skip_manual_mapping=False,
-    manual_mapping_callback=None,
 ):
     """
     Assign textures to materials using pattern-based matching from the mapping.
@@ -1123,13 +1064,7 @@ def setup_daz_materials(
             print(
                 f"  ✓ Using existing {map_type} texture from node tree: {os.path.basename(existing_map_file)}"
             )
-            _add_texture_with_manual_fallback(
-                material,
-                existing_map_file,
-                map_type,
-                skip_manual_mapping=skip_manual_mapping,
-                manual_mapping_callback=manual_mapping_callback,
-            )
+            _add_texture_to_material(material, existing_map_file, map_type)
 
         texture_family = _resolve_texture_family(
             material,
@@ -1173,13 +1108,7 @@ def setup_daz_materials(
 
             if color_file:
                 print(f"  ✓ Found color texture: {os.path.basename(color_file)}")
-                _add_texture_with_manual_fallback(
-                    material,
-                    color_file,
-                    'color',
-                    skip_manual_mapping=skip_manual_mapping,
-                    manual_mapping_callback=manual_mapping_callback,
-                )
+                _add_texture_to_material(material, color_file, 'color')
             else:
                 print(f"  ✗ No color texture found for pattern '{texture_pattern}'")
 
@@ -1200,13 +1129,7 @@ def setup_daz_materials(
                 print(
                     f"  ✓ Found related {map_type} texture from folder index: {os.path.basename(map_file)}"
                 )
-                _add_texture_with_manual_fallback(
-                    material,
-                    map_file,
-                    map_type,
-                    skip_manual_mapping=skip_manual_mapping,
-                    manual_mapping_callback=manual_mapping_callback,
-                )
+                _add_texture_to_material(material, map_file, map_type)
                 continue
 
             map_patterns = _resolve_additional_map_patterns(
@@ -1219,11 +1142,5 @@ def setup_daz_materials(
                 print(
                     f"  ✓ Found {map_type} texture: {os.path.basename(map_file)}"
                 )
-                _add_texture_with_manual_fallback(
-                    material,
-                    map_file,
-                    map_type,
-                    skip_manual_mapping=skip_manual_mapping,
-                    manual_mapping_callback=manual_mapping_callback,
-                )
+                _add_texture_to_material(material, map_file, map_type)
 

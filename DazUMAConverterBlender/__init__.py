@@ -17,7 +17,7 @@ import re
 import shutil
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 from bpy.types import Operator, Panel
-from bpy.props import StringProperty, EnumProperty, BoolProperty
+from bpy.props import StringProperty, BoolProperty
 
 if "dataHandling" in locals():
     importlib.reload(dataHandling)
@@ -148,9 +148,7 @@ class DAZUMA_PT_Panel(Panel):
             layout.label(text="Please import a Daz Genesis FBX", icon="INFO")
             box = layout.box()
             box.label(text="Import Options")
-            box.prop(context.scene, "import_skip_manual_mapping", text="Skip Manual Mapping")
             import_op = box.operator("dazuma.import", text="Import FBX")
-            import_op.skip_manual_mapping = context.scene.import_skip_manual_mapping
 
 
 # ── Operators ────────────────────────────────────────────────────────────────
@@ -200,14 +198,6 @@ class DAZUMA_OT_Import(Operator, ImportHelper):
     bl_label = "Import FBX"
     filename_ext = ".fbx"
     filter_glob: StringProperty(default="*.fbx", options={"HIDDEN"})
-    skip_manual_mapping: BoolProperty(
-        name="Skip Manual Mapping",
-        description="Do not show manual mapping dialog before automatic texture setup",
-        default=False,
-    )
-
-    def draw(self, context):
-        self.layout.prop(self, "skip_manual_mapping")
 
     def execute(self, context):
         import_options = {
@@ -221,106 +211,9 @@ class DAZUMA_OT_Import(Operator, ImportHelper):
         scene = context.scene
         file_dir = os.path.splitext(self.filepath)[0] + ".images"
 
-        scene.pending_texture_setup_path = file_dir
-        if self.skip_manual_mapping:
-            dazconverter.setup_daz_materials(
-                file_dir,
-                skip_manual_mapping=True,
-            )
-            scene.pending_texture_setup_path = ""
-            self.report({"INFO"}, "FBX imported successfully.")
-            return {"FINISHED"}
-
-        candidate = dazconverter.get_manual_mapping_candidate()
-        if candidate is None:
-            dazconverter.setup_daz_materials(
-                file_dir,
-                skip_manual_mapping=False,
-            )
-            scene.pending_texture_setup_path = ""
-            self.report({"INFO"}, "FBX imported successfully.")
-            return {"FINISHED"}
-
-        scene.manual_texture_material_name = candidate["material_name"]
-        scene.manual_texture_path = candidate["texture_path"]
-        scene.manual_texture_type = candidate["texture_type"]
-        scene.manual_texture_error = "Choose a mapping before automatic setup runs."
-        bpy.ops.dazuma.manual_texture_mapping("INVOKE_DEFAULT")
+        dazconverter.setup_daz_materials(file_dir)
         self.report({"INFO"}, "FBX imported successfully.")
         return {"FINISHED"}
-
-
-class DAZUMA_OT_ManualTextureMapping(Operator):
-    bl_idname = "dazuma.manual_texture_mapping"
-    bl_label = "Manual Texture Mapping"
-
-    _TEXTURE_TYPES = [
-        ("color", "Color", "Connect to Base Color"),
-        ("roughness", "Roughness", "Connect to Roughness"),
-        ("metallic", "Metallic", "Connect to Metallic"),
-        ("specular", "Specular", "Connect to Specular"),
-        ("bump", "Bump", "Connect through Bump node"),
-        ("normal", "Normal", "Connect through Normal Map node"),
-        ("transparency", "Transparency", "Connect to Alpha"),
-    ]
-
-    @classmethod
-    def poll(cls, context):
-        return hasattr(context.scene, "manual_texture_material_name")
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=520)
-
-    def draw(self, context):
-        layout = self.layout
-        scene = context.scene
-        layout.label(text="Automatic texture mapping failed.", icon="ERROR")
-        if scene.manual_texture_error:
-            layout.label(text=f"Reason: {scene.manual_texture_error}")
-        layout.label(text=f"Material: {scene.manual_texture_material_name}")
-        layout.prop(scene, "manual_texture_path", text="Texture Path")
-        layout.prop(scene, "manual_texture_type", text="Texture Type")
-
-    def execute(self, context):
-        scene = context.scene
-        material = bpy.data.materials.get(scene.manual_texture_material_name)
-        if material is None:
-            self.report(
-                {"ERROR"},
-                f"Material '{scene.manual_texture_material_name}' not found.",
-            )
-            return {"CANCELLED"}
-
-        texture_path = bpy.path.abspath(scene.manual_texture_path)
-        if not texture_path or not os.path.isfile(texture_path):
-            self.report({"ERROR"}, "Texture path does not exist.")
-            return {"CANCELLED"}
-
-        try:
-            dazconverter._add_texture_to_material(
-                material,
-                texture_path,
-                scene.manual_texture_type,
-            )
-        except Exception as exc:
-            self.report({"ERROR"}, f"Manual mapping failed: {exc}")
-            return {"CANCELLED"}
-
-        self.report(
-            {"INFO"},
-            f"Mapped {os.path.basename(texture_path)} as {scene.manual_texture_type} for {material.name}",
-        )
-
-        if scene.pending_texture_setup_path:
-            dazconverter.setup_daz_materials(
-                scene.pending_texture_setup_path,
-                skip_manual_mapping=True,
-            )
-            scene.pending_texture_setup_path = ""
-        return {"FINISHED"}
-
-    def cancel(self, context):
-        context.scene.pending_texture_setup_path = ""
 
 
 class DAZUMA_OT_SelectAllMeshes(Operator):
@@ -580,7 +473,6 @@ def register():
     gui.register_rig_type_selector()
     gui.register_split_mode_selector()
     gui.register_json_file_field()
-    gui.register_import_options()
     gui.register_race_wizard()
     gui.register_mesh_items()
     gui.register_select_all()
@@ -588,34 +480,6 @@ def register():
     bpy.utils.register_class(DAZUMA_PT_Panel)
     bpy.utils.register_class(DAZUMA_OT_Convert)
     bpy.utils.register_class(DAZUMA_OT_Import)
-    bpy.types.Scene.manual_texture_material_name = StringProperty(
-        name="Manual Material",
-        default="",
-        options={"HIDDEN"},
-    )
-    bpy.types.Scene.manual_texture_path = StringProperty(
-        name="Texture Path",
-        description="Texture file path to map manually",
-        subtype="FILE_PATH",
-        default="",
-    )
-    bpy.types.Scene.manual_texture_type = EnumProperty(
-        name="Texture Type",
-        description="Destination texture input type",
-        items=DAZUMA_OT_ManualTextureMapping._TEXTURE_TYPES,
-        default="color",
-    )
-    bpy.types.Scene.manual_texture_error = StringProperty(
-        name="Texture Error",
-        default="",
-        options={"HIDDEN"},
-    )
-    bpy.types.Scene.pending_texture_setup_path = StringProperty(
-        name="Pending Texture Setup Path",
-        default="",
-        options={"HIDDEN"},
-    )
-    bpy.utils.register_class(DAZUMA_OT_ManualTextureMapping)
     bpy.utils.register_class(DAZUMA_OT_SelectAllMeshes)
     bpy.utils.register_class(DAZUMA_OT_BatchRenameSlots)
     bpy.utils.register_class(DAZUMA_OT_Export)
@@ -625,7 +489,6 @@ def unregister():
     gui.unregister_rig_type_selector()
     gui.unregister_split_mode_selector()
     gui.unregister_json_file_field()
-    gui.unregister_import_options()
     gui.unregister_race_wizard()
     gui.unregister_mesh_items()
     gui.unregister_select_all()
@@ -633,12 +496,6 @@ def unregister():
     bpy.utils.unregister_class(DAZUMA_PT_Panel)
     bpy.utils.unregister_class(DAZUMA_OT_Convert)
     bpy.utils.unregister_class(DAZUMA_OT_Import)
-    bpy.utils.unregister_class(DAZUMA_OT_ManualTextureMapping)
-    del bpy.types.Scene.manual_texture_material_name
-    del bpy.types.Scene.manual_texture_path
-    del bpy.types.Scene.manual_texture_type
-    del bpy.types.Scene.manual_texture_error
-    del bpy.types.Scene.pending_texture_setup_path
     bpy.utils.unregister_class(DAZUMA_OT_SelectAllMeshes)
     bpy.utils.unregister_class(DAZUMA_OT_BatchRenameSlots)
     bpy.utils.unregister_class(DAZUMA_OT_Export)
