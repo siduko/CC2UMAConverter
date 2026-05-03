@@ -430,6 +430,11 @@ def _classify_texture_filename(texture_path):
     ):
         return "transparency"
 
+    # Color/diffuse is the most critical map — detect it early so it is never
+    # shadowed by the type-suffix checks below.
+    if re.search(r"(?:^|[_-])(d|diffuse|albedo|basecolor)\d*$", lower_stem):
+        return "color"
+
     if re.search(r"(?:^|[_-])(n|nm|nrm|nor|normal)\d*$", lower_stem):
         return "normal"
 
@@ -444,9 +449,6 @@ def _classify_texture_filename(texture_path):
 
     if re.search(r"(?:^|[_-])(b|bm|bp|bump|height|displacement)\d*$", lower_stem):
         return "bump"
-
-    if re.search(r"(?:^|[_-])(d|diffuse|albedo|basecolor)\d*$", lower_stem):
-        return "color"
 
     # Detect compact uppercase map suffix embedded immediately before a variant number:
     # e.g. RyJeane_armsB_1004 → 'B' is bump; RyJeane_torsoS_1002 → 'S' is specular.
@@ -487,9 +489,11 @@ def _classify_texture_filename(texture_path):
         return suffix_type_map.get(variant_suffix, "unknown")
 
     # Handle DAZ-style map letters without separators: s051TopB / s051TopS / s051TopN
-    trailing_compact_suffix = re.search(r"[a-z0-9]+(tr|sp|spec|bm|bp|nm|nrm|nor|ro|mt|b|n|r|m|s)$", lower_stem)
+    # Require UPPERCASE suffix (DAZ convention) so that lowercase word endings like
+    # "legs", "arms", "metallics" are never mistaken for type suffixes.
+    trailing_compact_suffix = re.search(r"[a-zA-Z0-9]+(TR|SP|SPEC|BM|BP|NM|NRM|NOR|RO|MT|B|N|R|M|S)$", stem)
     if trailing_compact_suffix:
-        suffix = trailing_compact_suffix.group(1)
+        suffix = trailing_compact_suffix.group(1).lower()
         compact_suffix_type_map = {
             "tr": "transparency",
             "sp": "specular",
@@ -512,7 +516,10 @@ def _classify_texture_filename(texture_path):
     if re.search(r"[0-9]+$", lower_stem):
         return "color"
 
-    return "unknown"
+    # No recognised suffix — treat the texture as the base diffuse/color map.
+    # e.g. Claire_Torso.jpg, Claire_Face.jpg where the name alone identifies the
+    # body part with no type discriminator appended.
+    return "color"
 
 
 def _derive_texture_family_from_filename(texture_path):

@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: CCTransparentMaterial
   m_EditorClassIdentifier: 
   translateSRP: 0
-  _material: {fileID: 2100000, guid: a1e2d3c4b5a68f7e8d9c0b1a2f3e4d5c6, type: 2}
+  _material: {fileID: 2100000, guid: 8f3b7d9a2c4e1b5f6a9d0e7c3f8b1d2e, type: 2}
   srpMaterials: []
   secondPass: {fileID: 0}
   materialType: 1

@@ -139,6 +139,57 @@ class TestDazConverterPatternConfig(unittest.TestCase):
             dazconverter._classify_texture_filename("s051Top05.jpg"),
             "color",
         )
+        # No recognised suffix — bare name with only word separators should be color
+        self.assertEqual(
+            dazconverter._classify_texture_filename("Claire_Torso.jpg"),
+            "color",
+        )
+        self.assertEqual(
+            dazconverter._classify_texture_filename("Claire_Face.jpg"),
+            "color",
+        )
+        self.assertEqual(
+            dazconverter._classify_texture_filename("Claire_mouth.jpg"),
+            "color",
+        )
+        # Trailing lowercase letters that are part of the word must NOT match as type suffixes
+        self.assertEqual(
+            dazconverter._classify_texture_filename("Claire_Legs.jpg"),
+            "color",
+        )
+        self.assertEqual(
+            dazconverter._classify_texture_filename("Claire_Arms.jpg"),
+            "color",
+        )
+        self.assertEqual(
+            dazconverter._classify_texture_filename("Metallics.jpg"),
+            "color",
+        )
+        # Explicit _s suffix after a word-ending must still be specular
+        self.assertEqual(
+            dazconverter._classify_texture_filename("Claire_Legs_s.jpg"),
+            "specular",
+        )
+        # Explicit _d suffix must be color regardless of check order
+        self.assertEqual(
+            dazconverter._classify_texture_filename("Belt_d.jpg"),
+            "color",
+        )
+
+    def test_index_textures_by_family_color_and_specular_both_present(self):
+        """Claire_Legs.jpg (color) and Claire_Legs_s.jpg (specular) must
+        both appear under the same family — neither drops the other."""
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("Claire_Legs.jpg", "Claire_Legs_b.jpg", "Claire_Legs_s.jpg"):
+                open(os.path.join(tmp, name), "w").close()
+            indexed = dazconverter._index_textures_by_family(tmp)
+        family = indexed.get("claire_legs", {})
+        self.assertIn("color", family, "Claire_Legs.jpg must be color")
+        self.assertIn("specular", family, "Claire_Legs_s.jpg must be specular")
+        self.assertIn("bump", family, "Claire_Legs_b.jpg must be bump")
+        self.assertIn("Claire_Legs.jpg", family["color"])
+        self.assertIn("Claire_Legs_s.jpg", family["specular"])
 
     def test_derive_texture_pattern_prefers_indexed_variant(self):
         self.assertEqual(
